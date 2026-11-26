@@ -1,0 +1,9 @@
+node_modules/
+npm-debug.log*
+.DS_Store
+*.tsbuildinfo
+coverage/
+.nyc_output/
+dist/
+.vite/
+.npm-cache/

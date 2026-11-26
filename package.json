@@ -1,0 +1,20 @@
+{
+  "name": "brick-fission",
+  "version": "0.1.0",
+  "private": true,
+  "description": "《碎砖大裂变》(Brick Fission) — 纯 TypeScript 核心引擎（Milestone 1）",
+  "type": "module",
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "test": "tsx --test src/game/core/__tests__/*.test.ts",
+    "test:core": "tsx --test src/game/core/__tests__/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
