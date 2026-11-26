@@ -153,6 +153,27 @@ export class SkillSystem {
     }
   }
 
+  /**
+   * 直接发放技能（Milestone 4 商业化预留：激励广告补给）。
+   *
+   * 与「击碎砖块充能」不同，本方法不受 `SKILL_CHARGE_EVERY_BRICKS` 限制，
+   * 只负责把库存加上指定次数并返回新的库存总数。
+   */
+  grantInventory(skill: 'MULTI_LAUNCH' | 'TRIPLE_SPLIT', count: number): number {
+    if (!Number.isFinite(count) || count <= 0) {
+      return skill === 'MULTI_LAUNCH'
+        ? this.inventory.multiLaunchCount
+        : this.inventory.tripleSplitCount;
+    }
+    const delta = Math.floor(count);
+    if (skill === 'MULTI_LAUNCH') {
+      this.inventory.multiLaunchCount += delta;
+      return this.inventory.multiLaunchCount;
+    }
+    this.inventory.tripleSplitCount += delta;
+    return this.inventory.tripleSplitCount;
+  }
+
   /* ---------------------------------------------------------------- */
   /* §5.1 蓝标：MULTI_LAUNCH                                          */
   /* ---------------------------------------------------------------- */

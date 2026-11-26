@@ -3,7 +3,7 @@
  *
  * 集中管理顶部栏、技能列、底栏 select 与结算弹窗的全部 DOM 访问，
  * `main.ts` 只面对语义方法。遵守 docs/04 红线：
- * 游戏 UI 禁止 eval / new Function / innerHTML，弹窗按钮一律 createElement。
+ * 游戏 UI 禁止动态代码执行与字符串注入式 DOM 写入，弹窗按钮一律 createElement。
  */
 import { PADDLE_SKIN_IDS } from '../game/render/SkinRegistry.js';
 
@@ -16,12 +16,30 @@ export interface HudCallbacks {
   onTripleSplit(): void;
   onLevelChange(index: number): void;
   onSkinChange(skinId: string): void;
+  onShopOpen(): void;
 }
 
 export interface ModalAction {
   label: string;
   primary?: boolean;
   onClick(): void;
+}
+
+/** 皮肤商店条目（`docs/04` §3.1 商业化循环 ③）。 */
+export interface SkinShopEntry {
+  id: string;
+  name: string;
+  price: number;
+  unlocked: boolean;
+  equipped: boolean;
+  canTrial: boolean;
+}
+
+export interface SkinShopActions {
+  onUnlock(skinId: string): void;
+  onTrial(skinId: string): void;
+  onEquip(skinId: string): void;
+  onClose(): void;
 }
 
 export class HudController {
@@ -38,10 +56,13 @@ export class HudController {
   private readonly orangeCount: HTMLElement;
   private readonly levelSelect: HTMLSelectElement;
   private readonly skinSelect: HTMLSelectElement;
+  private readonly coinCount: HTMLElement;
+  private readonly btnShop: HTMLButtonElement;
   private readonly modalMask: HTMLElement;
   private readonly modalTitle: HTMLElement;
   private readonly modalBody: HTMLElement;
   private readonly modalActions: HTMLElement;
+  private readonly shopPanel: HTMLElement;
 
   constructor(callbacks: HudCallbacks) {
     const $ = <T extends HTMLElement>(id: string): T => {
@@ -61,10 +82,13 @@ export class HudController {
     this.orangeCount = $('skill-orange-count');
     this.levelSelect = $<HTMLSelectElement>('level-select');
     this.skinSelect = $<HTMLSelectElement>('skin-select');
+    this.coinCount = $('coin-count');
+    this.btnShop = $<HTMLButtonElement>('btn-shop');
     this.modalMask = $('modal-mask');
     this.modalTitle = $('modal-title');
     this.modalBody = $('modal-body');
     this.modalActions = $('modal-actions');
+    this.shopPanel = $('shop-panel');
 
     this.btnSpeed.addEventListener('click', callbacks.onSpeedCycle);
     this.btnRestart.addEventListener('click', callbacks.onRestart);
@@ -78,27 +102,46 @@ export class HudController {
     this.skinSelect.addEventListener('change', () => {
       callbacks.onSkinChange(this.skinSelect.value);
     });
+    this.btnShop.addEventListener('click', () => callbacks.onShopOpen());
   }
 
-  /** 填充选关下拉（不触发 change 事件）。 */
-  fillLevelSelect(names: readonly string[], selectedIndex: number): void {
+  /**
+   * 填充选关下拉（不触发 change 事件）。
+   *
+   * @param unlockedCount 已解锁关卡数（1-based 语义：unlockedLevel = N 表示前 N 关可玩）。
+   */
+  fillLevelSelect(names: readonly string[], selectedIndex: number, unlockedCount = names.length): void {
     this.levelSelect.replaceChildren();
     names.forEach((name, i) => {
       const opt = document.createElement('option');
       opt.value = String(i);
-      opt.textContent = `${String(i + 1).padStart(2, '0')} · ${name}`;
+      const locked = i >= unlockedCount;
+      opt.textContent = locked
+        ? `${String(i + 1).padStart(2, '0')} · 🔒 ${name}`
+        : `${String(i + 1).padStart(2, '0')} · ${name}`;
+      opt.disabled = locked;
       this.levelSelect.appendChild(opt);
     });
     this.levelSelect.selectedIndex = selectedIndex;
   }
 
-  /** 填充皮肤下拉。 */
-  fillSkinSelect(labels: Readonly<Record<string, string>>, selectedId: string): void {
+  /**
+   * 填充皮肤下拉。
+   *
+   * @param unlockedSkins 已解锁皮肤 ID 列表；未解锁项显示 🔒 并禁用（引导玩家去商店）。
+   */
+  fillSkinSelect(
+    labels: Readonly<Record<string, string>>,
+    selectedId: string,
+    unlockedSkins: readonly string[] = PADDLE_SKIN_IDS,
+  ): void {
     this.skinSelect.replaceChildren();
     for (const id of PADDLE_SKIN_IDS) {
       const opt = document.createElement('option');
       opt.value = id;
-      opt.textContent = labels[id] ?? id;
+      const locked = !unlockedSkins.includes(id);
+      opt.textContent = locked ? `🔒 ${labels[id] ?? id}` : (labels[id] ?? id);
+      opt.disabled = locked;
       this.skinSelect.appendChild(opt);
     }
     this.skinSelect.value = selectedId;
@@ -126,8 +169,14 @@ export class HudController {
   setSkillCounts(blue: number, orange: number): void {
     this.blueCount.textContent = String(blue);
     this.orangeCount.textContent = String(orange);
-    this.btnBlue.disabled = blue <= 0;
-    this.btnOrange.disabled = orange <= 0;
+    // 库存为 0 时**不禁用**按钮：点击将进入「观看激励补给」流程（docs/04 §3.1 商业化循环 ②）。
+    this.btnBlue.classList.toggle('empty', blue <= 0);
+    this.btnOrange.classList.toggle('empty', orange <= 0);
+  }
+
+  /** 金币数（`docs/04` §3.1：解锁皮肤与过关奖励使用）。 */
+  setCoins(coins: number): void {
+    this.coinCount.textContent = String(Math.max(0, Math.floor(coins)));
   }
 
   /** 显示结算/提示弹窗。 */
@@ -155,5 +204,89 @@ export class HudController {
 
   get isModalVisible(): boolean {
     return !this.modalMask.classList.contains('hidden');
+  }
+
+  /**
+   * 显示皮肤商店（`docs/04` §3.1 商业化循环 ③）。
+   *
+   * 规则：
+   *   - 已解锁 → 直接装备；
+   *   - 未解锁且金币足够 → 金币解锁（扣币后永久拥有）；
+   *   - 未解锁且金币不足 → 可观看激励广告免费试用 1 局（试用不写入存档）。
+   */
+  showSkinShop(entries: readonly SkinShopEntry[], actions: SkinShopActions): void {
+    const list = document.createElement('div');
+    list.className = 'shop-list';
+    for (const entry of entries) {
+      const row = document.createElement('div');
+      row.className = 'shop-row';
+
+      const name = document.createElement('span');
+      name.className = 'shop-name';
+      name.textContent = entry.name;
+      row.appendChild(name);
+
+      const price = document.createElement('span');
+      price.className = 'shop-price';
+      price.textContent = entry.unlocked
+        ? (entry.equipped ? '已装备' : '已解锁')
+        : `${entry.price} 金币`;
+      row.appendChild(price);
+
+      if (entry.unlocked) {
+        const equip = document.createElement('button');
+        equip.type = 'button';
+        equip.className = entry.equipped ? 'shop-btn disabled' : 'shop-btn';
+        equip.textContent = entry.equipped ? '使用中' : '装备';
+        equip.addEventListener('click', () => {
+          this.hideSkinShop();
+          actions.onEquip(entry.id);
+        });
+        row.appendChild(equip);
+      } else {
+        const unlock = document.createElement('button');
+        unlock.type = 'button';
+        unlock.className = 'shop-btn';
+        unlock.textContent = `解锁 ${entry.price}`;
+        unlock.addEventListener('click', () => {
+          this.hideSkinShop();
+          actions.onUnlock(entry.id);
+        });
+        row.appendChild(unlock);
+
+        if (entry.canTrial) {
+          const trial = document.createElement('button');
+          trial.type = 'button';
+          trial.className = 'shop-btn ghost';
+          trial.textContent = '看激励试用';
+          trial.addEventListener('click', () => {
+            this.hideSkinShop();
+            actions.onTrial(entry.id);
+          });
+          row.appendChild(trial);
+        }
+      }
+      list.appendChild(row);
+    }
+
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'shop-btn ghost';
+    close.textContent = '关闭';
+    close.addEventListener('click', () => {
+      this.hideSkinShop();
+      actions.onClose();
+    });
+
+    this.shopPanel.replaceChildren(list, close);
+    this.shopPanel.classList.remove('hidden');
+  }
+
+  hideSkinShop(): void {
+    this.shopPanel.classList.add('hidden');
+  }
+
+  get isShopVisible(): boolean {
+    return !this.shopPanel.classList.contains('hidden');
   }
 }

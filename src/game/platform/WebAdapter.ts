@@ -22,6 +22,7 @@ import type {
   PlayerSaveData,
   SystemMetrics,
 } from './IPlatformAdapter.js';
+import { normalizeSaveData, recordBestTime } from './Progression.js';
 
 /** 激励视频呈现器：外壳可注入与游戏视觉统一的弹窗；返回是否完整观看。 */
 export type RewardedVideoPresenter = (placement: AdPlacement) => Promise<boolean>;
@@ -48,6 +49,8 @@ export class WebAdapter implements IPlatformAdapter {
   private readonly storage: Storage | null;
   private readonly rewardedVideo: RewardedVideoPresenter;
   private readonly lifecycleCbs = new Set<(state: 'show' | 'hide') => void>();
+  private readonly bannerCbs = new Set<(visible: boolean) => void>();
+  private bannerVisible = false;
   private readonly onVisibility = (): void => {
     const state: 'show' | 'hide' = document.visibilityState === 'hidden' ? 'hide' : 'show';
     this.lifecycleCbs.forEach((cb) => cb(state));
@@ -98,8 +101,7 @@ export class WebAdapter implements IPlatformAdapter {
     }
     if (!raw) return fallback;
     try {
-      const parsed = JSON.parse(raw) as Partial<PlayerSaveData>;
-      return normalizeSaveData(parsed, fallback);
+      return normalizeSaveData(JSON.parse(raw));
     } catch {
       return fallback; // 存档损坏：不阻断游戏，回退默认档
     }
@@ -133,8 +135,21 @@ export class WebAdapter implements IPlatformAdapter {
     );
   }
 
-  setBannerVisible(_visible: boolean): void {
-    // Web 试玩版无 Banner 广告位，保留接口钩子（Milestone 4 接入）。
+  setBannerVisible(visible: boolean): void {
+    // Web 试玩版无 Banner 广告位，保留接口钩子（Milestone 4 接入）：
+    // 记录状态并通知订阅方，方便外壳/渲染层预留底部安全区。
+    this.bannerVisible = visible;
+    this.bannerCbs.forEach((cb) => cb(visible));
+  }
+
+  /** 当前 Banner 是否处于可见状态（Web 端恒为 false，除非外壳模拟）。 */
+  get isBannerVisible(): boolean {
+    return this.bannerVisible;
+  }
+
+  /** 订阅 Banner 可见性变化（微信端真广告位接入时使用）。 */
+  onBannerVisibilityChange(cb: (visible: boolean) => void): void {
+    this.bannerCbs.add(cb);
   }
 
   shareAppMessage(params: { title: string; query?: string }): void {
@@ -150,9 +165,7 @@ export class WebAdapter implements IPlatformAdapter {
 
   submitRankScore(levelId: string, timeSec: number): void {
     const data = this.loadSaveData();
-    const prev = data.bestTimesSec[levelId];
-    if (prev === undefined || timeSec < prev) {
-      data.bestTimesSec[levelId] = timeSec;
+    if (recordBestTime(data, levelId, timeSec)) {
       this.writeSaveData(data);
     }
   }
@@ -166,6 +179,7 @@ export class WebAdapter implements IPlatformAdapter {
       document.removeEventListener('visibilitychange', this.onVisibility);
     }
     this.lifecycleCbs.clear();
+    this.bannerCbs.clear();
   }
 
   private fallbackCopy(text: string): void {
@@ -188,31 +202,6 @@ export class WebAdapter implements IPlatformAdapter {
       return null;
     }
   }
-}
-
-/** 合并外部存档与默认值，保证字段完整、类型可信。 */
-function normalizeSaveData(parsed: Partial<PlayerSaveData>, fallback: PlayerSaveData): PlayerSaveData {
-  const bestTimes =
-    parsed.bestTimesSec && typeof parsed.bestTimesSec === 'object' ? parsed.bestTimesSec : {};
-  const skins = Array.isArray(parsed.unlockedSkins) && parsed.unlockedSkins.length > 0
-    ? parsed.unlockedSkins
-    : fallback.unlockedSkins;
-  return {
-    unlockedLevel: Number.isFinite(parsed.unlockedLevel) ? Number(parsed.unlockedLevel) : fallback.unlockedLevel,
-    selectedPaddleSkin: typeof parsed.selectedPaddleSkin === 'string'
-      ? parsed.selectedPaddleSkin
-      : fallback.selectedPaddleSkin,
-    unlockedSkins: skins,
-    multiLaunchStock: Number.isFinite(parsed.multiLaunchStock)
-      ? Number(parsed.multiLaunchStock)
-      : fallback.multiLaunchStock,
-    tripleSplitStock: Number.isFinite(parsed.tripleSplitStock)
-      ? Number(parsed.tripleSplitStock)
-      : fallback.tripleSplitStock,
-    coins: Number.isFinite(parsed.coins) ? Number(parsed.coins) : fallback.coins,
-    muted: typeof parsed.muted === 'boolean' ? parsed.muted : fallback.muted,
-    bestTimesSec: bestTimes as Record<string, number>,
-  };
 }
 
 /* ------------------------------------------------------------------ */

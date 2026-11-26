@@ -89,7 +89,9 @@ export type GameEvent =
   // --- 追加扩展（不破坏既有成员语义）：技能溢出与残局辅助 ---
   | { type: 'DAMAGE_OVERLOAD'; multiplier: number; expiresInSec: number }
   | { type: 'ENDGAME_ASSIST'; targetCol: number; targetRow: number }
-  | { type: 'SKILL_GRANTED'; skill: 'MULTI_LAUNCH' | 'TRIPLE_SPLIT'; total: number };
+  | { type: 'SKILL_GRANTED'; skill: 'MULTI_LAUNCH' | 'TRIPLE_SPLIT'; total: number }
+  // --- 追加扩展（Milestone 4 商业化预留）：复活续关 ---
+  | { type: 'REVIVED'; ballCount: number };
 
 /** 事件类型名联合，便于消费方做 switch 穷尽检查。 */
 export type GameEventType = GameEvent['type'];

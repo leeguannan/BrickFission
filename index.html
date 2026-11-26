@@ -27,6 +27,8 @@
             <span id="level-no" class="level-no">01</span>
           </div>
           <div class="top-group right">
+            <span class="coin-chip" aria-label="金币数"><span class="coin-icon">🪙</span><span id="coin-count">0</span></span>
+            <button id="btn-shop" class="icon-btn" type="button" aria-label="皮肤商店">🛍</button>
             <button id="btn-sound" class="icon-btn" type="button" aria-label="静音开关">♪</button>
             <button id="btn-pause" class="icon-btn" type="button" aria-label="暂停">||</button>
           </div>
@@ -58,6 +60,9 @@
             <div id="modal-actions" class="modal-actions"></div>
           </div>
         </div>
+
+        <!-- 皮肤商店（docs/04 §3.1 商业化循环 ③） -->
+        <div id="shop-panel" class="shop-panel hidden"></div>
       </div>
     </div>
     <script type="module" src="./src/app/main.ts"></script>

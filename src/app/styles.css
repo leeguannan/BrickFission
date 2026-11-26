@@ -52,6 +52,10 @@ body {
   background: var(--bg-stage);
   overflow: hidden;
   box-shadow: 0 0 48px rgba(43, 127, 255, 0.18);
+  /* 安全区 / Banner 预留（由 main.ts 依据平台指标写入） */
+  --safe-top: 0px;
+  --safe-bottom: 0px;
+  --banner-reserve: 0px;
 }
 
 #game-canvas {
@@ -85,7 +89,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 18px 20px 8px;
+  padding: calc(18px + var(--safe-top)) 20px 8px;
   background: linear-gradient(180deg, rgba(5, 11, 34, 0.85), rgba(5, 11, 34, 0));
 }
 
@@ -139,6 +143,27 @@ body {
   cursor: default;
 }
 
+/* 金币计数（顶栏右侧） */
+.coin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--hud-border);
+  border-radius: 12px;
+  background: var(--hud-glass);
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  backdrop-filter: blur(6px);
+}
+
+.coin-icon {
+  font-size: 14px;
+  filter: saturate(1.2);
+}
+
 /* ------------------------------------------------------------------ */
 /* 左侧技能列（逻辑 x24~110, y800~1020）                                */
 /* ------------------------------------------------------------------ */
@@ -177,6 +202,23 @@ body {
   cursor: default;
 }
 
+/* 库存为 0：仍可点击（触发激励补给），用虚线描边 + 呼吸提示「可补给」。 */
+.skill-btn.empty {
+  border-style: dashed;
+  border-color: rgba(255, 255, 255, 0.7);
+  animation: skill-empty-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes skill-empty-pulse {
+  0%,
+  100% {
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  }
+  50% {
+    box-shadow: 0 4px 18px rgba(255, 255, 255, 0.35);
+  }
+}
+
 .skill-btn.blue {
   background: radial-gradient(circle at 32% 28%, #5b9bff, var(--blue-skill));
 }
@@ -212,8 +254,11 @@ body {
   bottom: 0;
   display: flex;
   gap: 12px;
-  padding: 12px 18px calc(14px + env(safe-area-inset-bottom));
+  /* 底部安全区：系统手势条 与 Banner 预留（Banner 可见时整体上移，避免误触） */
+  padding: 12px 18px
+    calc(14px + max(env(safe-area-inset-bottom), var(--safe-bottom)) + var(--banner-reserve));
   background: linear-gradient(0deg, rgba(5, 11, 34, 0.85), rgba(5, 11, 34, 0));
+  transition: padding 0.2s ease;
 }
 
 #bottom-bar select {
@@ -334,4 +379,84 @@ body {
   font-weight: 800;
   color: #7ca2ff;
   font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ */
+/* 皮肤商店（docs/04 §3.1 商业化循环 ③）                                */
+/* ------------------------------------------------------------------ */
+
+.shop-panel {
+  position: absolute;
+  left: 50%;
+  bottom: calc(96px + env(safe-area-inset-bottom) + var(--banner-reserve, 0px));
+  transform: translateX(-50%);
+  width: min(86%, 420px);
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--hud-border);
+  background: rgba(8, 16, 46, 0.96);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  pointer-events: auto;
+  z-index: 30;
+}
+
+.shop-panel.hidden {
+  display: none;
+}
+
+.shop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.shop-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--hud-border);
+  background: rgba(12, 23, 56, 0.9);
+}
+
+.shop-name {
+  flex: 1;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.shop-price {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-btn {
+  min-width: 72px;
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid var(--hud-border);
+  border-radius: 10px;
+  background: rgba(43, 127, 255, 0.28);
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.shop-btn:active {
+  transform: scale(0.95);
+}
+
+.shop-btn.ghost {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.shop-btn.disabled {
+  opacity: 0.45;
+  cursor: default;
 }

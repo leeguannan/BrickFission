@@ -29,7 +29,21 @@ import type {
 } from '../game/render/IRenderer.js';
 import { WebAdapter } from '../game/platform/WebAdapter.js';
 import type { PlayerSaveData } from '../game/platform/IPlatformAdapter.js';
+import {
+  SKIN_CATALOG,
+  canAffordSkin,
+  canTrialSkin,
+  findSkin,
+  grantClearReward,
+  isSkinUnlocked,
+  recordBestTime,
+  unlockNextLevel,
+  unlockSkin,
+} from '../game/platform/Progression.js';
 import type { LevelRuntimeConfig } from '../game/core/types.js';
+import { REVIVE_BALL_COUNT, SKILL_REFILL_COUNT, BANNER_RESERVED_HEIGHT } from '../game/core/constants.js';
+import { computeBannerLayout, computeSafeAreaPadding } from '../game/core/Layout.js';
+import type { SystemMetrics } from '../game/platform/IPlatformAdapter.js';
 import {
   BUILTIN_LEVELS,
   BUILTIN_LEVEL_COUNT,
@@ -67,6 +81,8 @@ class GameApp {
   private resultShown = false;
   /** 是否正在试玩 Studio 自定义关（切内置关时清除）。 */
   private playingCustom = false;
+  /** 激励广告免费试用的皮肤 ID（仅本局有效，不写入存档）。 */
+  private trialSkinId: string | null = null;
   private readonly studio: StudioController;
 
   /** 跨帧复用的脏砖缓冲（避免每帧分配，零 GC 红线在外壳层同样遵守）。 */
@@ -79,7 +95,7 @@ class GameApp {
     this.muted = this.save.muted;
 
     this.canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
-    this.engine = new GameEngine({ level: getBuiltinRuntimeConfig(0) });
+    this.engine = this.createEngine(getBuiltinRuntimeConfig(0));
 
     this.studio = new StudioController({
       onPlay: (config) => this.loadCustomLevel(config),
@@ -100,6 +116,7 @@ class GameApp {
       onTripleSplit: () => this.useTripleSplit(),
       onLevelChange: (i) => this.switchLevel(i),
       onSkinChange: (id) => this.switchSkin(id),
+      onShopOpen: () => this.openShop(),
     });
 
     this.input = new InputController(this.canvas, {
@@ -113,18 +130,24 @@ class GameApp {
   start(): void {
     const metrics = this.adapter.getSystemMetrics();
     this.renderer.init(this.canvas, WORLD_WIDTH, WORLD_HEIGHT, metrics.dpr);
-    this.renderer.setSkin(this.save.selectedPaddleSkin);
+    this.renderer.setSkin(this.effectiveSkinId);
+    this.applySafeArea(metrics);
 
     this.hud.fillLevelSelect(
       BUILTIN_LEVELS.map((d) => d.name),
       this.levelIndex,
+      this.save.unlockedLevel,
     );
-    this.hud.fillSkinSelect(SKIN_LABELS, this.save.selectedPaddleSkin);
+    this.hud.fillSkinSelect(SKIN_LABELS, this.save.selectedPaddleSkin, this.save.unlockedSkins);
     this.bindStudioButton();
     this.hud.setLevelNo(1);
     this.hud.setSpeedLabel(1);
     this.hud.setSoundLabel(this.muted);
+    this.hud.setCoins(this.save.coins);
     this.audio.setMuted(this.muted);
+
+    // 存档迁移落盘：旧存档经 `normalizeSaveData` 升级后立即写回，避免重复迁移。
+    this.adapter.writeSaveData(this.save);
 
     this.input.attach();
     this.adapter.onLifecycleChange((state) => {
@@ -135,6 +158,7 @@ class GameApp {
         this.hud.setPausedLabel(true);
       }
     });
+    this.adapter.onBannerVisibilityChange((visible) => this.applyBannerLayout(visible));
 
     this.lastFrameAt = performance.now();
     this.rafId = requestAnimationFrame(this.frame);
@@ -148,6 +172,36 @@ class GameApp {
     this.input.detach();
     void this.audio.dispose();
   };
+
+  /**
+   * 安全区适配（`docs/04` §2：顶部避让胶囊 90~110px，底部避让 Banner/手势条）。
+   *
+   * 写入 CSS 变量 `--safe-top` / `--safe-bottom`，由 `styles.css` 的 HUD 层消费。
+   */
+  private applySafeArea(metrics: SystemMetrics): void {
+    const padding = computeSafeAreaPadding({
+      safeAreaTop: metrics.safeAreaTop,
+      safeAreaBottom: metrics.safeAreaBottom,
+    });
+    const frame = document.getElementById('stage-frame');
+    if (!frame) return;
+    frame.style.setProperty('--safe-top', `${padding.top}px`);
+    frame.style.setProperty('--safe-bottom', `${padding.bottom}px`);
+  }
+
+  /**
+   * Banner 广告位预留（`docs/04` §2：Banner 高 100~140px 时，挡板操作线须在其上方 ≥80px）。
+   *
+   * Web 试玩版没有真 Banner，但保留完整钩子：外壳模拟 `setBannerVisible(true)` 时，
+   * 底栏整体上移，避免误触；核心间距由 `computeBannerLayout` 统一校验。
+   */
+  private applyBannerLayout(visible: boolean): void {
+    const layout = computeBannerLayout(visible);
+    const frame = document.getElementById('stage-frame');
+    if (!frame) return;
+    frame.style.setProperty('--banner-reserve', visible ? `${BANNER_RESERVED_HEIGHT}px` : '0px');
+    frame.classList.toggle('banner-visible', layout.visible);
+  }
 
   /* ---------------------------------------------------------------- */
   /* 主循环                                                            */
@@ -185,7 +239,7 @@ class GameApp {
       speedMultiplier: e.currentSpeedMultiplier,
       damageMultiplier: e.damageMultiplier(),
       endgameAssist: e.isEndgameAssistActive,
-      paddleSkinId: this.save.selectedPaddleSkin,
+      paddleSkinId: this.effectiveSkinId,
       muted: this.muted,
     };
     const data: RenderContextData = {
@@ -308,25 +362,192 @@ class GameApp {
   }
 
   private useMultiLaunch(): void {
+    // 库存为 0 → 进入「观看激励（模拟）补给」流程，而不是禁用按钮。
+    if (this.engine.skillInventory.multiLaunchCount <= 0) {
+      void this.refillSkill('MULTI_LAUNCH');
+      return;
+    }
     this.engine.useMultiLaunch();
   }
 
   private useTripleSplit(): void {
+    if (this.engine.skillInventory.tripleSplitCount <= 0) {
+      void this.refillSkill('TRIPLE_SPLIT');
+      return;
+    }
     this.engine.useTripleSplit();
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* 商业化循环（docs/04 §3.1）                                        */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * 技能补给（商业化循环 ②）：观看激励广告 → 发放库存。
+   *
+   * 观看期间**自动暂停物理**，领完立刻恢复（`docs/04` 明确要求）。
+   */
+  private async refillSkill(skill: 'MULTI_LAUNCH' | 'TRIPLE_SPLIT'): Promise<void> {
+    const placement = skill === 'MULTI_LAUNCH' ? 'REFILL_SKILL_BLUE' : 'REFILL_SKILL_ORANGE';
+    const wasPlaying = this.engine.currentPhase === 'PLAYING';
+    if (wasPlaying) {
+      this.engine.pause();
+      this.audio.setPaused(true);
+      this.hud.setPausedLabel(true);
+    }
+    try {
+      const { rewarded } = await this.adapter.showRewardedVideo(placement);
+      if (rewarded) {
+        const total = this.engine.grantSkill(skill, SKILL_REFILL_COUNT);
+        if (skill === 'MULTI_LAUNCH') this.save.multiLaunchStock = total;
+        else this.save.tripleSplitStock = total;
+        this.adapter.writeSaveData(this.save);
+      }
+    } finally {
+      if (wasPlaying && this.engine.currentPhase === 'PAUSED') {
+        this.engine.resume();
+        this.audio.setPaused(false);
+        this.hud.setPausedLabel(false);
+      }
+    }
+  }
+
+  /** 失败复活（商业化循环 ①）：观看激励 → 保留已碎砖块进度 + 赠送 3 颗球。 */
+  private async watchRevive(): Promise<void> {
+    const { rewarded } = await this.adapter.showRewardedVideo('REVIVE_KEEP_PROGRESS');
+    if (!rewarded) return;
+    const ok = this.engine.revive(REVIVE_BALL_COUNT);
+    if (!ok) return;
+    this.resultShown = false; // 复活后若再次失败，仍可弹复活窗
+    this.hud.setPausedLabel(false);
+    this.audio.setPaused(false);
+  }
+
+  /** 过关双倍金币（商业化循环 ①的结算分支）：看完激励再发一份基础奖励。 */
+  private async watchDoubleCoins(baseCoins: number): Promise<void> {
+    const { rewarded } = await this.adapter.showRewardedVideo('DOUBLE_CLEAR_REWARD');
+    if (!rewarded) return;
+    this.save.coins += baseCoins;
+    this.adapter.writeSaveData(this.save);
+    this.hud.setCoins(this.save.coins);
+  }
+
+  /** 皮肤商店（商业化循环 ③）。 */
+  private openShop(): void {
+    const entries = SKIN_CATALOG.map((skin) => ({
+      id: skin.id,
+      name: skin.displayName,
+      price: skin.price,
+      unlocked: isSkinUnlocked(this.save, skin.id),
+      equipped: this.effectiveSkinId === skin.id,
+      canTrial: canTrialSkin(skin.id),
+    }));
+    this.hud.showSkinShop(entries, {
+      onUnlock: (id) => void this.buySkin(id),
+      onTrial: (id) => void this.trialSkin(id),
+      onEquip: (id) => this.switchSkin(id),
+      onClose: () => undefined,
+    });
+  }
+
+  /** 金币解锁皮肤（永久拥有）。 */
+  private async buySkin(skinId: string): Promise<void> {
+    const entry = findSkin(skinId);
+    if (!entry) return;
+    if (isSkinUnlocked(this.save, skinId)) {
+      this.switchSkin(skinId);
+      return;
+    }
+    if (!canAffordSkin(this.save, skinId)) {
+      this.hud.showModal('金币不足', `「${entry.displayName}」需要 ${entry.price} 金币`, [
+        { label: '知道了', primary: true, onClick: () => undefined },
+      ]);
+      return;
+    }
+    if (!unlockSkin(this.save, skinId)) return;
+    this.adapter.writeSaveData(this.save);
+    this.trialSkinId = null;
+    this.renderer.setSkin(skinId);
+    this.hud.setCoins(this.save.coins);
+    this.hud.fillSkinSelect(SKIN_LABELS, this.save.selectedPaddleSkin, this.save.unlockedSkins);
+    this.hud.showModal('解锁成功', `已永久解锁「${entry.displayName}」`, [
+      { label: '继续游戏', primary: true, onClick: () => undefined },
+    ]);
+  }
+
+  /** 激励广告免费试用皮肤（仅本局有效）。 */
+  private async trialSkin(skinId: string): Promise<void> {
+    const entry = findSkin(skinId);
+    if (!entry || !canTrialSkin(skinId)) return;
+    const { rewarded } = await this.adapter.showRewardedVideo('TRIAL_SKIN');
+    if (!rewarded) return;
+    this.trialSkinId = skinId;
+    this.renderer.setSkin(skinId);
+    this.hud.showModal('试用中', `「${entry.displayName}」本局免费试用`, [
+      { label: '开始体验', primary: true, onClick: () => undefined },
+    ]);
+  }
+
+  /** 当前生效的皮肤（试用优先于存档选中项）。 */
+  private get effectiveSkinId(): string {
+    return this.trialSkinId ?? this.save.selectedPaddleSkin;
+  }
+
+  /**
+   * 用存档里的全局技能库存构造引擎。
+   *
+   * 取「关卡配置初始值」与「玩家全局库存」的较大者，保证换关不惩罚；
+   * 关卡内击碎砖块充能得到的库存会在离关时写回存档（`persistSkillStock`）。
+   */
+  private createEngine(level: LevelRuntimeConfig): GameEngine {
+    const levelBlue = level.initialSkills?.multiLaunchCount ?? 0;
+    const levelOrange = level.initialSkills?.tripleSplitCount ?? 0;
+    return new GameEngine({
+      level,
+      initialSkills: {
+        multiLaunchCount: Math.max(levelBlue, this.save.multiLaunchStock),
+        tripleSplitCount: Math.max(levelOrange, this.save.tripleSplitStock),
+      },
+    });
+  }
+
+  /** 把本关剩余技能库存写回全局存档（只增不减）。 */
+  private persistSkillStock(): void {
+    const inv = this.engine.skillInventory;
+    this.save.multiLaunchStock = Math.max(this.save.multiLaunchStock, inv.multiLaunchCount);
+    this.save.tripleSplitStock = Math.max(this.save.tripleSplitStock, inv.tripleSplitCount);
+    this.adapter.writeSaveData(this.save);
   }
 
   private switchLevel(index: number): void {
     const safe = Math.max(0, Math.min(BUILTIN_LEVEL_COUNT - 1, index));
+    if (safe + 1 > this.save.unlockedLevel) {
+      this.hud.showModal('关卡未解锁', '请先通关前面的关卡，或点击 🛍 商店赚取金币。', [
+        { label: '知道了', primary: true, onClick: () => undefined },
+      ]);
+      this.hud.fillLevelSelect(
+        BUILTIN_LEVELS.map((d) => d.name),
+        this.levelIndex,
+        this.save.unlockedLevel,
+      );
+      return;
+    }
+    this.persistSkillStock();
     this.levelIndex = safe;
     this.playingCustom = false;
-    this.engine = new GameEngine({ level: getBuiltinRuntimeConfig(safe) });
+    this.trialSkinId = null;
+    this.engine = this.createEngine(getBuiltinRuntimeConfig(safe));
+    this.renderer.setSkin(this.effectiveSkinId);
     this.afterLevelReload();
   }
 
   /** Studio 一键试玩：注入自定义关卡运行时配置并立即开局。 */
   private loadCustomLevel(config: LevelRuntimeConfig): void {
+    this.persistSkillStock();
     this.playingCustom = true;
-    this.engine = new GameEngine({ level: config });
+    this.trialSkinId = null;
+    this.engine = this.createEngine(config);
+    this.renderer.setSkin(this.effectiveSkinId);
     this.afterLevelReload();
   }
 
@@ -336,7 +557,10 @@ class GameApp {
   }
 
   private restartLevel(): void {
+    this.persistSkillStock();
+    this.trialSkinId = null;
     this.engine.restart();
+    this.renderer.setSkin(this.effectiveSkinId);
     this.afterLevelReload();
   }
 
@@ -351,6 +575,13 @@ class GameApp {
   }
 
   private switchSkin(skinId: string): void {
+    if (!isSkinUnlocked(this.save, skinId)) {
+      // 未解锁：引导到商店（金币解锁 / 激励试用）。
+      this.hud.fillSkinSelect(SKIN_LABELS, this.save.selectedPaddleSkin, this.save.unlockedSkins);
+      this.openShop();
+      return;
+    }
+    this.trialSkinId = null;
     this.renderer.setSkin(skinId);
     this.save.selectedPaddleSkin = skinId;
     this.adapter.writeSaveData(this.save);
@@ -363,12 +594,37 @@ class GameApp {
   private onLevelWon(elapsedSec: number): void {
     if (this.resultShown) return;
     this.resultShown = true;
-    this.adapter.submitRankScore(this.engine.levelId, elapsedSec);
+    const levelId = this.engine.levelId;
+
+    // 最佳秒数（WebAdapter.submitRankScore 已写盘，这里同步到内存存档用于首通判定）。
+    const firstClear = this.save.bestTimesSec[levelId] === undefined;
+    recordBestTime(this.save, levelId, elapsedSec);
+
+    // 解锁下一关（Studio 自定义关不参与解锁）。
+    if (!this.playingCustom) unlockNextLevel(this.save, this.levelIndex);
+
+    // 过关结算金币（基础奖励）。
+    const remainingRatio = 1 - this.engine.remainingRatio;
+    const baseCoins = grantClearReward(this.save, {
+      remainingRatio: Math.max(0, Math.min(1, remainingRatio)),
+      firstClear,
+      doubled: false,
+    });
+    this.persistSkillStock();
+    this.adapter.writeSaveData(this.save);
+    this.hud.setCoins(this.save.coins);
+    this.hud.fillLevelSelect(
+      BUILTIN_LEVELS.map((d) => d.name),
+      this.levelIndex,
+      this.save.unlockedLevel,
+    );
+
     const hasNext = !this.playingCustom && this.levelIndex + 1 < BUILTIN_LEVEL_COUNT;
     this.hud.showModal(
       '通关！',
-      `用时 ${elapsedSec.toFixed(1)} 秒 · 剩余灰墙不计入目标`,
+      `用时 ${elapsedSec.toFixed(1)} 秒 · 获得 ${baseCoins} 金币 · 剩余灰墙不计入目标`,
       [
+        { label: '金币翻倍（观看激励）', onClick: () => void this.watchDoubleCoins(baseCoins) },
         { label: '重开本关', onClick: () => this.restartLevel() },
         ...(hasNext
           ? [{
@@ -384,10 +640,18 @@ class GameApp {
   private onLevelLost(remainingRatio: number): void {
     if (this.resultShown) return;
     this.resultShown = true;
+    this.persistSkillStock();
     this.hud.showModal(
       '球全部出界',
       `剩余可破坏砖块 ${(remainingRatio * 100).toFixed(1)}%`,
-      [{ label: '重开本关', primary: true, onClick: () => this.restartLevel() }],
+      [
+        {
+          label: `复活续关（保留进度 + ${REVIVE_BALL_COUNT} 球）`,
+          primary: true,
+          onClick: () => void this.watchRevive(),
+        },
+        { label: '直接重开', onClick: () => this.restartLevel() },
+      ],
     );
   }
 
@@ -400,6 +664,7 @@ class GameApp {
     this.hud.setSkillCounts(inv.multiLaunchCount, inv.tripleSplitCount);
     // 暂停态每帧同步（含后台自动暂停/恢复），保证按钮图标与真实状态一致。
     this.hud.setPausedLabel(this.engine.currentPhase === 'PAUSED');
+    this.hud.setCoins(this.save.coins);
   }
 }
 

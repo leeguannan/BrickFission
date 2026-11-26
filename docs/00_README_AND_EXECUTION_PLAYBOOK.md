@@ -98,3 +98,23 @@ src/
 ### Milestone 4：商业化预留接口、微信适配层规范与整体压测
 * **指令范围**：依据 `04_WECHAT_ADAPTATION_AND_ROADMAP.md`，补全 `IPlatformAdapter` 的广告复活/技能补给/双倍结算流程（Web 端用可控调试弹窗模拟）、本地存档持久化、`WechatAdapter.stub.ts` 完整对接代码，以及残局防枯燥加速逻辑。
 * **完成标志**：`npm run lint`（`tsc --noEmit`）零报错、`npm run build` 成功，300 球同屏性能监控稳定 60 FPS，所有 Step 2~4 扩展位接口清晰。
+
+---
+
+## 5. 四个 Milestone 交付状态与验收证据（截至 M4 收尾）
+
+| Milestone | 交付内容 | 提交 | 验收证据 |
+| :--- | :--- | :--- | :--- |
+| M1 | `src/game/core/` 纯 TS 内核（8 源文件 2654 行）+ 8 个测试文件 | `8f1882a` | 56 例内核单测全绿；`src/game/core` 零宿主 API |
+| M2 | `src/game/render/`（离屏分层 + 精灵烘焙 + 对象池）、`src/game/audio/`（程序化音效 + 动态 BGM）、`src/game/platform/WebAdapter.ts`、`src/app/` 试玩壳层 | `80e997b` | 23 例渲染单测；浏览器可玩闭环；构建产物 76KB |
+| M3 | `src/game/levels/`（Schema / 三大生成器 / 难度评分器 / 20 关库）+ `src/studio/` Level Studio | `cee9b63` | 38 例关卡单测 + 11 例工作台单测；Studio 自动评分 34ms |
+| M4 | 商业化闭环（复活 / 技能补给 / 皮肤商店 / 金币 / 解锁持久化）、`src/game/platform/WechatAdapter.stub.ts`、安全区与 Banner 预留 | 见 §6 交付清单 | 35 例平台单测 + 13 例商业化内核单测；`npm run lint` 零报错；`npm run build` 成功；满池压测平均 0.011ms/帧 |
+
+### 5.1 已知文档口径差（提交前如实标注）
+
+1. **同屏球数**：§4 Milestone 4 完成标志写「300 球同屏」，而 `01_CORE_ENGINE_AND_PHYSICS_SPEC.md` 的内核球池上限为 `MAX_PHYSICAL_BALLS = 200`。本仓库按物理规格实现 200 球池，压测（`npm run bench`）取引擎可达上限；300 球需先上调内核池上限再复测。
+2. **盲测难度参考点**：`03` 号文档字面取 45% / 12%，在 42×38 关卡规模与真实物理下不可达；已按实测标定为 28% / 5%（见 `03` 号文档 §6）。
+
+### 5.2 M4 浏览器端未闭环项（如实说明）
+
+失败复活（`GAME_LOST` → 「复活续关」按钮）与过关金币翻倍依赖球全部漏出底线；本次浏览器验证环境的 Agent Window 处于系统后台（`document.visibilityState = hidden`），`requestAnimationFrame` 被浏览器节流且引擎按规格自动暂停，无法稳定制造 `LOST` 态，故这两条链路的**浏览器端实测未完成**。其内核行为由 `src/game/core/__tests__/commercial.test.ts`（13 例）覆盖：复活仅在 `LOST` 可用、保留已碎砖块进度、补发 3 球、阶段回到 `PLAYING`、派发 `REVIVED` 事件；广告位与存档行为由 `src/game/platform/__tests__/`（35 例）覆盖。已在浏览器实测通过的部分：皮肤商店（价格 / 解锁 / 激励试用生效且不改存档选中项）、技能库存归零后仍可点击并经模拟广告补给 +2 次、金币徽标、关卡解锁 🔒 标记与拦截、旧存档迁移回收多余皮肤。

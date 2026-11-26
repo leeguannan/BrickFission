@@ -102,3 +102,87 @@ V1 虽以轻量耐玩为主，但必须跑通以下核心循环（Web 版即可�
 4. **玩法闭环体验**：Web 端连续试玩 5 关，验证瞄准反射、蓝/橙双技能、200 球超载倍率转化、`1x/2x/3x` 快进、竹节皮肤、复活续关、音阶连击与动态 BGM 全部正常。
 5. **关卡工作台验证**：在 Level Studio 中输入汉字（如“破”）与上传图片生成关卡，成功输出难度评分与盲测报告，并能立即试玩。
 6. **微信迁移就绪度**：检查 `WechatAdapter.stub.ts` 与所有平台调用点，确认无任何阻断微信开发者工具编译的依赖。
+
+---
+
+## 6. Milestone 4 落地实现记录与自检报告
+
+> 本节为 M4 交付时的实际落地情况记录，作为 §5 最终 Code Review 的证据底稿。
+> 验收命令与实测结果均取自本仓库当前提交状态。
+
+### 6.1 交付文件清单（M4 相对 M3 基线 `cee9b63`）
+
+新增：
+
+| 文件 | 行数 | 作用 |
+| :--- | ---: | :--- |
+| `src/game/core/Layout.ts` | 100 | 安全区/Banner 防误触纯计算（零宿主 API） |
+| `src/game/platform/Progression.ts` | 231 | 存档规范化 + 皮肤解锁 + 结算金币 + 关卡解锁 + 最佳秒数（唯一事实源，Web/微信共用） |
+| `src/game/platform/WechatAdapter.stub.ts` | 291 | 微信小游戏适配模板（编译期不引用任何 `wx` 全局类型） |
+| `src/game/core/__tests__/commercial.test.ts` | 166 | 复活/补给/Banner 间距内核单测（13 例） |
+| `src/game/platform/__tests__/progression.test.ts` | 175 | 商业化规则单测（19 例） |
+| `src/game/platform/__tests__/web_adapter.test.ts` | 122 | Web 适配器单测（8 例） |
+| `src/game/platform/__tests__/wechat_adapter.test.ts` | 210 | 微信适配器单测（6 例） |
+| `scripts/bench-300-balls.ts` | 99 | 同屏满池性能压测 |
+
+修改：
+
+`src/game/core/constants.ts`（§7 安全区/复活/补给常量）、`src/game/core/types.ts`（`REVIVED` 事件）、`src/game/core/SkillSystem.ts`（`grantInventory`）、`src/game/core/GameEngine.ts`（`revive()` / `grantSkill()` / `computeReviveAngles()`）、`src/game/platform/IPlatformAdapter.ts`（默认仅解锁「胶囊蓝」皮肤）、`src/game/platform/WebAdapter.ts`（存档走 `Progression`、Banner 状态广播）、`src/app/main.ts`（复活/补给/商店/金币/关卡解锁/安全区接线）、`src/app/HudController.ts`（金币与商店面板、库存为 0 仍可点击）、`src/app/styles.css`（安全区变量、商店样式、库存告警呼吸动效）、`index.html`（金币徽标 + 商店按钮 + 商店面板）、`package.json`（v0.4.0、`bench` 脚本）。
+
+### 6.2 商业化三循环落地对照（对应 §3）
+
+1. **失败复活**：`GameEngine.revive(3)`（`src/game/core/GameEngine.ts`）仅在 `LOST` 阶段可用，从 `dockedBallPosition` 按 `REVIVE_FAN_ANGLES` 扇形补发 3 球并回到 `PLAYING`；**不重建 `BrickGrid`**，天然满足「保留当前已清砖块进度」；`src/app/main.ts` 的 `watchRevive()` 走 `AdPlacement.REVIVE_KEEP_PROGRESS`，结算面板同时提供「复活续关」与「直接重开」。
+2. **技能补给**：蓝/橙标库存归零时按钮不再 `disabled`（`HudController.setSkillCounts` 仅加 `.empty` 告警样式），点击触发 `refillSkill()` → `AdPlacement.REFILL_SKILL_BLUE / REFILL_SKILL_ORANGE` → `engine.grantSkill()` 发放 `SKILL_REFILL_COUNT = 2` 次 → 写回存档；观看期间自动暂停物理与音频，结束后立即恢复。
+3. **皮肤解锁/试用**：`SKIN_CATALOG`（胶囊蓝 0 / 翠竹节 120 / 极简白 200）+ `Progression.unlockSkin()` 扣币解锁，或 `AdPlacement.TRIAL_SKIN` 免费试用 1 局（`trialSkinId` 仅本次会话有效，`effectiveSkinId` 取 `trialSkinId ?? selectedPaddleSkin`）。
+
+> **存档版本迁移（`saveVersion`）**：`PlayerSaveData` 在 M4 新增 `saveVersion`（当前为 1）。Milestone 3 及更早的存档没有该字段，且当时**尚不存在皮肤解锁机制**（旧默认存档把三款皮肤全部解锁），因此 `Progression.normalizeSaveData()` 对无 `saveVersion` 的旧存档执行一次迁移：把 `unlockedSkins` 回收为「仅基础皮肤」，金币、关卡进度、技能库存、最佳秒数等其余资产完整保留；带 `saveVersion` 的新存档则原样保留玩家已解锁的皮肤。`src/app/main.ts` 启动时把迁移结果立即写回，避免重复迁移。
+
+### 6.3 安全区与 Banner 防误触（对应 §2 第 2 条）
+
+* `src/game/core/Layout.ts`：`computeBannerLayout(true)` → `bannerTop = 1280 - 100 = 1180`、`interactiveBottom = min(PADDLE_Y, bannerTop - 80) = 1090`、`clearance = 90 ≥ 80` → `compliant = true`；`verifyBannerClearance()` 为内核侧可断言的硬约束。
+* `src/app/styles.css`：`--safe-top / --safe-bottom / --banner-reserve` 三个 CSS 变量分别注入顶栏 padding、底栏 padding 与 Banner 预留高度，底栏留白为 `calc(14px + max(env(safe-area-inset-bottom), var(--safe-bottom)) + var(--banner-reserve))`。
+* `src/app/main.ts`：`applySafeArea(metrics)` 依据 `IPlatformAdapter.getSystemMetrics()` 写入安全区；`applyBannerLayout(visible)` 依据 `adapter.onBannerVisibilityChange()` 切换预留。
+
+### 6.4 Step 2~4 扩展钩子自检报告（对应 §4）
+
+| 阶段 | 预埋钩子 | 实测位置 | 结论 |
+| :--- | :--- | :--- | :--- |
+| Step 2 | `BrickRole` 的 `BOMB / PRISM / CORE` | `src/game/core/types.ts` | ✅ 保留 |
+| Step 2 | `PADDLE_HIT` 携带 `offsetRatio` | `src/game/core/types.ts` + `PhysicsEngine.collidePaddle()` | ✅ 保留（并被音频边缘音与精准接球复用） |
+| Step 2 | `ENDGAME_ASSIST` 残局软追踪 | `GameEngine.updateEndgameAssist()` / `applySoftHoming()` | ✅ 保留 |
+| Step 3 | `Ball.pierceCount` | `src/game/core/types.ts` | ✅ 保留 |
+| Step 3 | 事件总线可触发 `PAUSED -> PICK_BUFF` | `GameEngine.pause()/resume()` + `drainEvents()` + `LevelRuntimeConfig` | ✅ 保留（`PICK_BUFF` 阶段由后续版本新增，钩子不改内核即可接入） |
+| Step 3 | `LevelMechanicsConfig` 旋转 / Boss 字段 | `src/game/levels/LevelSchema.ts`（`rotationSpeedDegPerSec` / `bossMode` / `roguePoolId`） | ✅ 保留 |
+| Step 4 | 纯 TS 关卡生成（可直接跑微信） | `src/game/levels/LevelGenerators.ts` + `src/studio/imageRasterize.ts` | ✅ 保留（`src/game/levels` 实测零 DOM 依赖） |
+| Step 4 | `bestTimesSec` + `shareAppMessage(query)` | `PlayerSaveData.bestTimesSec` + `Progression.recordBestTime()` + `WechatAdapter.shareAppMessage()` | ✅ 保留 |
+
+### 6.5 目录纯洁度自检（对应 §5 第 1、6 条）
+
+`src/game/core/` 全量 grep 命中数（均为 0）：
+
+`window` 0 · `document` 0 · `HTMLCanvasElement` 0 · `AudioContext` 0 · `requestAnimationFrame` 0 · `React` 0 · `wx.` 0 · `navigator` 0 · `localStorage` 0 · `setTimeout` 0 · `setInterval` 0 · `fetch` 0 · `OffscreenCanvas` 0
+
+全项目 `src/`：`eval(` 0 · 动态代码执行 0 · `.innerHTML` 0 · `.outerHTML` 0 · `document.write` 0；`src/game/levels/` 的 `document.` / `window.` / `HTMLCanvasElement` 均 0。
+`src/game/core` 共 8 个源文件、2654 行，全部为纯 TypeScript。
+
+### 6.6 性能压测数据（对应 §5 第 2 条 与 M4 完成标志）
+
+`npm run bench`（`scripts/bench-300-balls.ts`，headless 无渲染，稳态维持满池）：
+
+```
+压测球数：199（内核池上限 200）
+采样帧数：3000        补充球数（维持满池）：481
+平均物理步耗时：0.011 ms    P95：0.054 ms    最大：0.136 ms
+等效帧率（仅物理步）：89395 FPS
+残留球数：200        NaN 检测：通过
+```
+
+⚠️ **文档口径差（须如实标注）**：`docs/00` 的 M4 完成标志写「300 球同屏」，但 `docs/01` 物理规格的内核球池上限为 `MAX_PHYSICAL_BALLS = 200`，引擎实际可达上限为 **200 球同屏**。本仓库按 `docs/01` 实现（200 池），压测即取该上限；300 球需在上调内核池上限后重新压测。
+
+### 6.7 编译与单测结果
+
+| 命令 | 结果 |
+| :--- | :--- |
+| `npm test` | `tests 163 / pass 163 / fail 0`（core 56 · render 23 · levels 38 · studio 11 · platform 35） |
+| `npm run lint` | 零报错（`tsc -p tsconfig.core.json --noEmit && tsc --noEmit`） |
+| `npm run build` | 成功（vite 32 modules；dist index.html 3.66KB / CSS 8.93KB(gzip 2.60KB) / JS 135.55KB(gzip 39.34KB)，总量远低于 500KB 目标） |

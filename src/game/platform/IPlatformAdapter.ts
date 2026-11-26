@@ -7,8 +7,10 @@
  */
 import type { AnyCanvas } from './AnyCanvas.js';
 
-/** 本地存档结构（存档 Key 由各端适配器统一为 `brick_fission_save_v1`）。 */
+/** 存档结构（存档 Key 由各端适配器统一为 `brick_fission_save_v1`）。 */
 export interface PlayerSaveData {
+  /** 存档结构版本：Milestone 4 引入商业化时升级为 1（见 `Progression.normalizeSaveData` 的迁移逻辑）。 */
+  saveVersion: number;
   unlockedLevel: number;
   selectedPaddleSkin: string;
   unlockedSkins: string[];
@@ -57,12 +59,17 @@ export interface IPlatformAdapter {
 /** 存档版本化 Key（docs/04 §1 双端统一）。 */
 export const SAVE_DATA_KEY = 'brick_fission_save_v1';
 
+/** 当前存档结构版本。 */
+export const SAVE_VERSION = 1;
+
 /** 新建账号的默认存档。 */
 export function createDefaultSaveData(): PlayerSaveData {
   return {
+    saveVersion: SAVE_VERSION,
     unlockedLevel: 1,
     selectedPaddleSkin: 'capsule_blue',
-    unlockedSkins: ['capsule_blue', 'bamboo_green', 'minimal_white'],
+    // Milestone 4 商业化：默认只解锁基础皮肤，翠竹节 / 极简白需金币解锁或激励广告试用。
+    unlockedSkins: ['capsule_blue'],
     multiLaunchStock: 3,
     tripleSplitStock: 2,
     coins: 0,

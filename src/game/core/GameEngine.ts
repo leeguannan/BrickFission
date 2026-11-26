@@ -31,6 +31,9 @@ import {
   PADDLE_HEIGHT,
   PADDLE_WIDTH,
   PADDLE_Y,
+  REVIVE_BALL_COUNT,
+  REVIVE_FAN_ANGLES,
+  SKILL_REFILL_COUNT,
   WALL_LEFT,
   WALL_RIGHT,
 } from './constants.js';
@@ -290,6 +293,65 @@ export class GameEngine implements PhysicsWorld {
   }
 
   /* ---------------------------------------------------------------- */
+  /* 商业化预留（Milestone 4）                                          */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * 复活续关（`docs/04` §3.1 商业化循环 ①）。
+   *
+   * 语义：
+   *   - 仅在 `LOST` 阶段可用（一次失败一次机会，用掉即失效）；
+   *   - **保留已清砖块进度**（`grid` 不重建）；
+   *   - 从挡板上方按扇形补发 `ballCount` 颗球（默认 3 颗，见 `REVIVE_BALL_COUNT`）；
+   *   - 阶段回到 `PLAYING`，计时继续累计（用于最佳秒数统计）。
+   *
+   * @param ballCount 补发球数，默认 `REVIVE_BALL_COUNT`。
+   * @returns 是否复活成功（无球可发或阶段不允许时为 false）。
+   */
+  revive(ballCount: number = REVIVE_BALL_COUNT): boolean {
+    if (this.phase !== 'LOST') return false;
+    if (!Number.isFinite(ballCount) || ballCount <= 0) return false;
+
+    const count = Math.floor(ballCount);
+    const docked = this.dockedBallPosition;
+    const angles = computeReviveAngles(count);
+    let spawned = 0;
+    for (let i = 0; i < angles.length; i++) {
+      const angleDeg = angles[i] ?? 0;
+      const rad = (angleDeg * Math.PI) / 180;
+      const vx = BASE_BALL_SPEED * Math.sin(rad);
+      const vy = -BASE_BALL_SPEED * Math.cos(rad);
+      const ball = this.physics.spawnBall(docked.x, docked.y, vx, vy, BALL_RADIUS);
+      if (!ball) break;
+      spawned += 1;
+    }
+    if (spawned === 0) return false;
+
+    this.phase = 'PLAYING';
+    this.idleBrickSec = 0;
+    this.emit({ type: 'REVIVED', ballCount: spawned });
+    return true;
+  }
+
+  /**
+   * 直接发放技能库存（`docs/04` §3.1 商业化循环 ②：激励广告补给）。
+   *
+   * 不受「击碎砖块充能」限制，只加库存；调用方负责广告观看与暂停/恢复。
+   *
+   * @param skill 技能种类。
+   * @param count 发放次数，默认 `SKILL_REFILL_COUNT`。
+   * @returns 发放后的库存总数（未发放时返回原值）。
+   */
+  grantSkill(
+    skill: 'MULTI_LAUNCH' | 'TRIPLE_SPLIT',
+    count: number = SKILL_REFILL_COUNT,
+  ): number {
+    const total = this.skills.grantInventory(skill, count);
+    this.emit({ type: 'SKILL_GRANTED', skill, total });
+    return total;
+  }
+
+  /* ---------------------------------------------------------------- */
   /* 主循环                                                            */
   /* ---------------------------------------------------------------- */
 
@@ -505,6 +567,26 @@ function wrapAngle(angle: number): number {
   while (a > Math.PI) a -= Math.PI * 2;
   while (a <= -Math.PI) a += Math.PI * 2;
   return a;
+}
+
+/**
+ * 计算复活补发球的扇形角度（单位：度，0 = 垂直向上）。
+ *
+ * - 1 颗：正上方，避免无谓偏折；
+ * - 2 颗：±6°，左右对称；
+ * - 3 颗：-12° / 0° / +12°（默认复活球数）；
+ * - 4 颗及以上：在 ±12° 内等距铺开（4 颗时与 `REVIVE_FAN_ANGLES` 完全一致）。
+ */
+function computeReviveAngles(count: number): number[] {
+  const span = 12;
+  const n = Math.max(1, Math.floor(count));
+  if (n === 1) return [0];
+  if (n === 2) return [-span / 2, span / 2];
+  if (n === REVIVE_FAN_ANGLES.length) return [...REVIVE_FAN_ANGLES];
+  const step = (span * 2) / (n - 1);
+  const angles: number[] = [];
+  for (let i = 0; i < n; i++) angles.push(-span + i * step);
+  return angles;
 }
 
 /** 供外部复用：死亡线常量（渲染层做死亡特效时使用）。 */

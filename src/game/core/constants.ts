@@ -154,6 +154,32 @@ export const ENDGAME_IDLE_SEC = 6;
 export const ENDGAME_HOMING_DEG = 12;
 
 /* ------------------------------------------------------------------ */
+/* §7 商业化与安全区（Milestone 4，docs/04 §2）                        */
+/* ------------------------------------------------------------------ */
+
+/** 微信右上角胶囊按钮占用高度区间（逻辑 px）：安全区顶部必须避开该区间。 */
+export const SAFE_AREA_TOP_MIN = 90;
+export const SAFE_AREA_TOP_MAX = 110;
+
+/**
+ * 底部 Banner 广告预留高度（逻辑 px）。
+ * 取 docs/04 §2.2 给出的区间下限 `100px`，确保挡板操作线仍在广告上方留足安全间距。
+ */
+export const BANNER_RESERVED_HEIGHT = 100;
+
+/** 挡板操作线与 Banner 上沿之间的最小安全间距（逻辑 px），防止误触广告被判违规。 */
+export const BANNER_SAFE_CLEARANCE = 80;
+
+/** 失败复活赠送的球数。 */
+export const REVIVE_BALL_COUNT = 3;
+
+/** 激励广告补给技能时赠送的次数。 */
+export const SKILL_REFILL_COUNT = 2;
+
+/** 复活时新球相对垂直向上的扇形角度（度）。 */
+export const REVIVE_FAN_ANGLES: readonly number[] = [-12, -4, 4, 12];
+
+/* ------------------------------------------------------------------ */
 /* 物理工具常量                                                        */
 /* ------------------------------------------------------------------ */
 /** 位置推出时附加的微小间隙，避免下一帧立即重复接触。 */
