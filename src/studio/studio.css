@@ -1,0 +1,201 @@
+/* Level Studio 工作台样式（原生 DOM，无框架）。 */
+
+.studio-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3, 7, 24, 0.82);
+  backdrop-filter: blur(6px);
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.studio-panel {
+  display: flex;
+  flex-direction: column;
+  width: min(1080px, 100%);
+  max-height: 94vh;
+  background: linear-gradient(180deg, #0d1838 0%, #08102e 100%);
+  border: 1px solid rgba(124, 162, 255, 0.35);
+  border-radius: 16px;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55);
+  color: #e8eeff;
+  overflow: hidden;
+}
+
+.studio-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(124, 162, 255, 0.2);
+}
+
+.studio-title {
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.studio-panel .studio-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.studio-editor-wrap {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 16px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  background: rgba(5, 11, 34, 0.6);
+}
+
+.studio-canvas {
+  touch-action: none;
+  cursor: crosshair;
+  border: 1px solid rgba(124, 162, 255, 0.3);
+  border-radius: 6px;
+  image-rendering: pixelated;
+  background: #0b1538;
+}
+
+.studio-controls {
+  flex: 0 0 300px;
+  max-width: 320px;
+  padding: 14px 16px;
+  overflow-y: auto;
+  border-left: 1px solid rgba(124, 162, 255, 0.2);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.studio-section-title {
+  margin-top: 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: #8fb0ff;
+  text-transform: uppercase;
+}
+
+.studio-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.studio-btn {
+  appearance: none;
+  border: 1px solid rgba(124, 162, 255, 0.4);
+  background: rgba(43, 127, 255, 0.16);
+  color: #e8eeff;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.studio-btn:hover {
+  background: rgba(43, 127, 255, 0.32);
+}
+
+.studio-btn.is-active {
+  background: #2b7fff;
+  border-color: #6aa0ff;
+  box-shadow: 0 0 0 2px rgba(43, 127, 255, 0.25);
+}
+
+.studio-actions {
+  margin-top: 6px;
+}
+
+.studio-action {
+  flex: 1 1 auto;
+  background: rgba(46, 200, 130, 0.18);
+  border-color: rgba(46, 200, 130, 0.45);
+}
+
+.studio-action:hover {
+  background: rgba(46, 200, 130, 0.34);
+}
+
+.studio-input,
+.studio-select,
+.studio-file {
+  width: 100%;
+  box-sizing: border-box;
+  background: rgba(5, 11, 34, 0.8);
+  border: 1px solid rgba(124, 162, 255, 0.3);
+  border-radius: 8px;
+  color: #e8eeff;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+
+.studio-file {
+  padding: 6px;
+  font-size: 12px;
+}
+
+.studio-labeled {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 40%;
+}
+
+.studio-label {
+  font-size: 11px;
+  color: #9db4e8;
+}
+
+.studio-counter {
+  font-size: 12px;
+  color: #b9c8ef;
+  padding: 6px 0;
+}
+
+.studio-score {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+  background: rgba(5, 11, 34, 0.7);
+  border: 1px solid rgba(124, 162, 255, 0.2);
+  border-radius: 8px;
+  padding: 10px;
+  min-height: 48px;
+}
+
+.studio-warn {
+  color: #ff8a8a;
+  font-weight: 600;
+}
+
+.studio-info {
+  color: #7fe0b0;
+}
+
+@media (max-width: 760px) {
+  .studio-panel .studio-body,
+  .studio-panel {
+    flex-direction: column;
+  }
+  .studio-controls {
+    flex: none;
+    max-width: none;
+    border-left: none;
+    border-top: 1px solid rgba(124, 162, 255, 0.2);
+    max-height: 42vh;
+  }
+}

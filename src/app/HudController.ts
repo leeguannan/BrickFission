@@ -29,6 +29,8 @@ export class HudController {
   private readonly btnRestart: HTMLButtonElement;
   private readonly btnSound: HTMLButtonElement;
   private readonly btnPause: HTMLButtonElement;
+  /** 暂停标签上次写入值，用于跳过无变化的 DOM 写入。 */
+  private lastPaused: boolean | null = null;
   private readonly levelNo: HTMLElement;
   private readonly btnBlue: HTMLButtonElement;
   private readonly btnOrange: HTMLButtonElement;
@@ -111,6 +113,9 @@ export class HudController {
   }
 
   setPausedLabel(paused: boolean): void {
+    // 每帧同步时避免重复写 DOM（文本未变则不触碰）。
+    if (this.lastPaused === paused) return;
+    this.lastPaused = paused;
     this.btnPause.textContent = paused ? '▶' : '||';
   }
 

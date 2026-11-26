@@ -1,16 +1,19 @@
 {
   "name": "brick-fission",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "《碎砖大裂变》(Brick Fission) — 纯 TypeScript 核心引擎 + Canvas2D 渲染 + 程序化音频（Milestone 2）",
+  "description": "《碎砖大裂变》(Brick Fission) — 纯 TypeScript 核心引擎 + Canvas2D 渲染 + 程序化音频 + 关卡工作台（Milestone 3）",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc -p tsconfig.core.json --noEmit && tsc --noEmit",
-    "test": "tsx --test src/game/core/__tests__/*.test.ts src/game/render/__tests__/*.test.ts",
-    "test:core": "tsx --test src/game/core/__tests__/*.test.ts"
+    "test": "tsx --test src/game/core/__tests__/*.test.ts src/game/render/__tests__/*.test.ts src/game/levels/__tests__/*.test.ts src/studio/__tests__/*.test.ts",
+    "test:serial": "tsx --test --test-concurrency=1 src/game/core/__tests__/*.test.ts src/game/render/__tests__/*.test.ts src/game/levels/__tests__/*.test.ts src/studio/__tests__/*.test.ts",
+    "test:core": "tsx --test src/game/core/__tests__/*.test.ts",
+    "test:levels": "tsx --test src/game/levels/__tests__/*.test.ts",
+    "test:studio": "tsx --test src/studio/__tests__/*.test.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

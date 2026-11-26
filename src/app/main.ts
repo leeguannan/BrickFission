@@ -29,9 +29,16 @@ import type {
 } from '../game/render/IRenderer.js';
 import { WebAdapter } from '../game/platform/WebAdapter.js';
 import type { PlayerSaveData } from '../game/platform/IPlatformAdapter.js';
+import type { LevelRuntimeConfig } from '../game/core/types.js';
+import {
+  BUILTIN_LEVELS,
+  BUILTIN_LEVEL_COUNT,
+  getBuiltinRuntimeConfig,
+} from '../game/levels/builtinLevels.js';
+import { StudioController } from '../studio/StudioController.js';
+import '../studio/studio.css';
 import { HudController } from './HudController.js';
 import { InputController } from './InputController.js';
-import { TEST_LEVELS } from './testLevels.js';
 
 const SKIN_LABELS: Readonly<Record<string, string>> = {
   [PADDLE_SKIN_CAPSULE_BLUE]: '经典蓝胶囊',
@@ -58,6 +65,9 @@ class GameApp {
   private rafId = 0;
   private lastFrameAt = 0;
   private resultShown = false;
+  /** 是否正在试玩 Studio 自定义关（切内置关时清除）。 */
+  private playingCustom = false;
+  private readonly studio: StudioController;
 
   /** 跨帧复用的脏砖缓冲（避免每帧分配，零 GC 红线在外壳层同样遵守）。 */
   private readonly dirtyBricks: DirtyBrickUpdate[] = [];
@@ -69,7 +79,12 @@ class GameApp {
     this.muted = this.save.muted;
 
     this.canvas = document.getElementById('game-canvas') as HTMLCanvasElement;
-    this.engine = new GameEngine({ level: TEST_LEVELS[0]!.config });
+    this.engine = new GameEngine({ level: getBuiltinRuntimeConfig(0) });
+
+    this.studio = new StudioController({
+      onPlay: (config) => this.loadCustomLevel(config),
+      onClose: () => undefined,
+    });
 
     this.renderer = new Canvas2DRenderer({
       adapter: this.adapter,
@@ -101,10 +116,11 @@ class GameApp {
     this.renderer.setSkin(this.save.selectedPaddleSkin);
 
     this.hud.fillLevelSelect(
-      TEST_LEVELS.map((d) => d.name),
+      BUILTIN_LEVELS.map((d) => d.name),
       this.levelIndex,
     );
     this.hud.fillSkinSelect(SKIN_LABELS, this.save.selectedPaddleSkin);
+    this.bindStudioButton();
     this.hud.setLevelNo(1);
     this.hud.setSpeedLabel(1);
     this.hud.setSoundLabel(this.muted);
@@ -300,10 +316,23 @@ class GameApp {
   }
 
   private switchLevel(index: number): void {
-    const def = TEST_LEVELS[Math.max(0, Math.min(TEST_LEVELS.length - 1, index))]!;
-    this.levelIndex = TEST_LEVELS.indexOf(def);
-    this.engine = new GameEngine({ level: def.config });
+    const safe = Math.max(0, Math.min(BUILTIN_LEVEL_COUNT - 1, index));
+    this.levelIndex = safe;
+    this.playingCustom = false;
+    this.engine = new GameEngine({ level: getBuiltinRuntimeConfig(safe) });
     this.afterLevelReload();
+  }
+
+  /** Studio 一键试玩：注入自定义关卡运行时配置并立即开局。 */
+  private loadCustomLevel(config: LevelRuntimeConfig): void {
+    this.playingCustom = true;
+    this.engine = new GameEngine({ level: config });
+    this.afterLevelReload();
+  }
+
+  private bindStudioButton(): void {
+    const btn = document.getElementById('btn-studio');
+    btn?.addEventListener('click', () => this.studio.open());
   }
 
   private restartLevel(): void {
@@ -335,7 +364,7 @@ class GameApp {
     if (this.resultShown) return;
     this.resultShown = true;
     this.adapter.submitRankScore(this.engine.levelId, elapsedSec);
-    const hasNext = this.levelIndex + 1 < TEST_LEVELS.length;
+    const hasNext = !this.playingCustom && this.levelIndex + 1 < BUILTIN_LEVEL_COUNT;
     this.hud.showModal(
       '通关！',
       `用时 ${elapsedSec.toFixed(1)} 秒 · 剩余灰墙不计入目标`,
@@ -369,6 +398,8 @@ class GameApp {
   private syncHud(): void {
     const inv = this.engine.skillInventory;
     this.hud.setSkillCounts(inv.multiLaunchCount, inv.tripleSplitCount);
+    // 暂停态每帧同步（含后台自动暂停/恢复），保证按钮图标与真实状态一致。
+    this.hud.setPausedLabel(this.engine.currentPhase === 'PAUSED');
   }
 }
 
