@@ -263,12 +263,22 @@ export class GameEngine implements PhysicsWorld {
     return true;
   }
 
-  /** 使用蓝标（连发加球）。 */
+  /**
+   * 使用蓝标（连发加球）。
+   *
+   * 规格 docs/01 §5.1 明确适用场景含「开局快速铺场」，因此 READY_AIM
+   * 阶段同样允许使用：扇形小球从挡板发射后阶段机转入 PLAYING。
+   * PAUSED / WON / LOST 阶段拒绝。
+   */
   useMultiLaunch(): SkillUseResult {
-    if (this.phase !== 'PLAYING') {
+    if (this.phase !== 'PLAYING' && this.phase !== 'READY_AIM') {
       return { used: false, spawnedCount: 0, overflowCount: 0, overloadMultiplier: 1 };
     }
-    return this.skills.useMultiLaunch(this.skillContext);
+    const result = this.skills.useMultiLaunch(this.skillContext);
+    if (result.used && result.spawnedCount > 0 && this.phase === 'READY_AIM') {
+      this.phase = 'PLAYING';
+    }
+    return result;
   }
 
   /** 使用橙标（全场裂变 ×3）。 */

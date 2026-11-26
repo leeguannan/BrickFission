@@ -1,0 +1,337 @@
+/*
+ * 《碎砖大裂变》(Brick Fission) — Milestone 2 Web 试玩壳层样式
+ * 深蓝夜空视觉（docs/02 §1）：外围 #050b22 / 舞台 #08102e。
+ * 舞台固定 720×1280 逻辑比，按视口等比缩放，UI 层与画布事件隔离。
+ */
+
+:root {
+  --bg-outer: #050b22;
+  --bg-stage: #08102e;
+  --hud-glass: rgba(10, 22, 58, 0.72);
+  --hud-border: rgba(124, 162, 255, 0.35);
+  --text-main: #e8eeff;
+  --text-dim: #93a0c8;
+  --blue-skill: #2b7fff;
+  --orange-skill: #f59e0b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg-outer);
+  color: var(--text-main);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app-root {
+  width: 100vw;
+  height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 竖屏舞台：高度优先撑满，宽度按 9:16 等比收敛 */
+#stage-frame {
+  position: relative;
+  height: 100dvh;
+  aspect-ratio: 720 / 1280;
+  max-width: 100vw;
+  background: var(--bg-stage);
+  overflow: hidden;
+  box-shadow: 0 0 48px rgba(43, 127, 255, 0.18);
+}
+
+#game-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+}
+
+.ui-layer {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none; /* 层默认透传，仅具体控件接管事件 */
+}
+
+.ui-layer button,
+.ui-layer select {
+  pointer-events: auto;
+}
+
+/* ------------------------------------------------------------------ */
+/* 顶部栏（逻辑 y18~90）                                                */
+/* ------------------------------------------------------------------ */
+
+#top-bar {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 7%;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 20px 8px;
+  background: linear-gradient(180deg, rgba(5, 11, 34, 0.85), rgba(5, 11, 34, 0));
+}
+
+.top-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.top-group.center {
+  gap: 8px;
+  font-weight: 600;
+  letter-spacing: 2px;
+}
+
+.level-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #7ca2ff;
+  box-shadow: 0 0 8px rgba(124, 162, 255, 0.9);
+}
+
+.level-no {
+  font-size: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.icon-btn {
+  min-width: 46px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--hud-border);
+  border-radius: 12px;
+  background: var(--hud-glass);
+  color: var(--text-main);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.icon-btn:active {
+  transform: scale(0.94);
+  background: rgba(43, 127, 255, 0.35);
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* ------------------------------------------------------------------ */
+/* 左侧技能列（逻辑 x24~110, y800~1020）                                */
+/* ------------------------------------------------------------------ */
+
+#skill-column {
+  left: 2.6%;
+  top: 62.5%;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.skill-btn {
+  position: relative;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  color: #fff;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  transition: transform 0.1s ease, filter 0.15s ease;
+}
+
+.skill-btn:active {
+  transform: scale(0.92);
+}
+
+.skill-btn:disabled {
+  filter: grayscale(0.8) brightness(0.55);
+  cursor: default;
+}
+
+.skill-btn.blue {
+  background: radial-gradient(circle at 32% 28%, #5b9bff, var(--blue-skill));
+}
+
+.skill-btn.orange {
+  background: radial-gradient(circle at 32% 28%, #ffc061, var(--orange-skill));
+}
+
+.skill-glyph {
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: 1px;
+}
+
+.skill-glyph.tri {
+  font-size: 11px;
+  line-height: 1.15;
+}
+
+.skill-count {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------ */
+/* 底栏：选关 / 皮肤                                                    */
+/* ------------------------------------------------------------------ */
+
+#bottom-bar {
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  gap: 12px;
+  padding: 12px 18px calc(14px + env(safe-area-inset-bottom));
+  background: linear-gradient(0deg, rgba(5, 11, 34, 0.85), rgba(5, 11, 34, 0));
+}
+
+#bottom-bar select {
+  flex: 1;
+  height: 42px;
+  border: 1px solid var(--hud-border);
+  border-radius: 10px;
+  background: var(--hud-glass);
+  color: var(--text-main);
+  font-size: 14px;
+  padding: 0 12px;
+  backdrop-filter: blur(6px);
+}
+
+#bottom-bar select option {
+  background: #0c1738;
+  color: var(--text-main);
+}
+
+/* ------------------------------------------------------------------ */
+/* 弹窗                                                                */
+/* ------------------------------------------------------------------ */
+
+.modal-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3, 7, 22, 0.66);
+  backdrop-filter: blur(4px);
+  pointer-events: auto;
+}
+
+.modal-mask.hidden {
+  display: none;
+}
+
+.modal-card {
+  width: 72%;
+  max-width: 460px;
+  padding: 28px 26px 24px;
+  border: 1px solid var(--hud-border);
+  border-radius: 18px;
+  background: linear-gradient(160deg, #101d46, #0a1433);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+  text-align: center;
+}
+
+.modal-card h2 {
+  margin: 0 0 10px;
+  font-size: 24px;
+}
+
+.modal-card p {
+  margin: 0 0 22px;
+  color: var(--text-dim);
+  font-size: 15px;
+  line-height: 1.6;
+}
+
+.modal-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.modal-btn {
+  height: 44px;
+  border: 1px solid var(--hud-border);
+  border-radius: 12px;
+  background: rgba(124, 162, 255, 0.14);
+  color: var(--text-main);
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.modal-btn.primary {
+  background: linear-gradient(135deg, #2b7fff, #5b9bff);
+  border-color: transparent;
+}
+
+.modal-btn:active {
+  transform: scale(0.97);
+}
+
+/* 模拟激励广告倒计时弹窗（WebAdapter 内置呈现器） */
+.bf-reward-mask {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(3, 7, 22, 0.8);
+  pointer-events: auto;
+}
+
+.bf-reward-card {
+  width: 70%;
+  padding: 30px 24px;
+  border-radius: 16px;
+  border: 1px solid var(--hud-border);
+  background: #0c1738;
+  text-align: center;
+}
+
+.bf-reward-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.bf-reward-count {
+  font-size: 40px;
+  font-weight: 800;
+  color: #7ca2ff;
+  font-variant-numeric: tabular-nums;
+}

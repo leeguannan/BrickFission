@@ -173,9 +173,34 @@ test('skill：每击碎 150 块砖交替奖励 +1 蓝标 / +1 橙标', () => {
   assert.equal(granted.length, 2);
 });
 
-test('skill：非 PLAYING 阶段不可使用技能', () => {
+test('skill：READY_AIM 阶段蓝标可开局铺场，发射后转入 PLAYING', () => {
   const engine = buildEngine();
   assert.equal(engine.currentPhase, 'READY_AIM');
+
+  const result = engine.useMultiLaunch();
+  assert.equal(result.used, true);
+  assert.equal(result.spawnedCount, MULTI_LAUNCH_COUNT);
+  assert.equal(engine.activeBallCount, MULTI_LAUNCH_COUNT);
+  assert.equal(engine.skillInventory.multiLaunchCount, 0, '应消耗 1 个蓝标');
+  assert.equal(engine.currentPhase, 'PLAYING', '开局铺场后应进入 PLAYING');
+});
+
+test('skill：READY_AIM 阶段橙标拒绝（场上无存活球可分裂）', () => {
+  const engine = buildEngine();
+  assert.equal(engine.currentPhase, 'READY_AIM');
+  const result = engine.useTripleSplit();
+  assert.equal(result.used, false);
+  assert.equal(engine.activeBallCount, 0);
+  assert.equal(engine.currentPhase, 'READY_AIM');
+});
+
+test('skill：PAUSED 阶段两个技能均被拒绝', () => {
+  const engine = buildEngine();
+  engine.releaseBall();
+  assert.equal(engine.currentPhase, 'PLAYING');
+  engine.pause();
+  assert.equal(engine.currentPhase, 'PAUSED');
+
   assert.equal(engine.useMultiLaunch().used, false);
   assert.equal(engine.useTripleSplit().used, false);
 });
