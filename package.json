@@ -9,8 +9,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "lint": "tsc -p tsconfig.core.json --noEmit && tsc --noEmit",
-    "test": "tsx --test src/game/core/__tests__/*.test.ts src/game/render/__tests__/*.test.ts src/game/levels/__tests__/*.test.ts src/game/platform/__tests__/*.test.ts src/studio/__tests__/*.test.ts",
-    "test:serial": "tsx --test --test-concurrency=1 src/game/core/__tests__/*.test.ts src/game/render/__tests__/*.test.ts src/game/levels/__tests__/*.test.ts src/game/platform/__tests__/*.test.ts src/studio/__tests__/*.test.ts",
+    "test": "tsx --test src/game/core/__tests__/*.test.ts src/game/render/__tests__/*.test.ts src/game/levels/__tests__/*.test.ts src/game/platform/__tests__/*.test.ts src/game/ai/__tests__/*.test.ts src/studio/__tests__/*.test.ts",
+    "test:serial": "tsx --test --test-concurrency=1 src/game/core/__tests__/*.test.ts src/game/render/__tests__/*.test.ts src/game/levels/__tests__/*.test.ts src/game/platform/__tests__/*.test.ts src/game/ai/__tests__/*.test.ts src/studio/__tests__/*.test.ts",
     "test:core": "tsx --test src/game/core/__tests__/*.test.ts",
     "test:levels": "tsx --test src/game/levels/__tests__/*.test.ts",
     "test:platform": "tsx --test src/game/platform/__tests__/*.test.ts",
@@ -18,7 +18,8 @@
     "test:bot": "tsx scripts/test-levels-playthrough.ts",
     "test:e2e": "playwright test",
     "test:all": "npm run lint && npm test && npm run bench && npm run test:bot && npm run test:e2e && npm run build",
-    "bench": "tsx scripts/bench-300-balls.ts"
+    "bench": "tsx scripts/bench-300-balls.ts",
+    "test:ai": "tsx --test src/game/ai/__tests__/*.test.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",
