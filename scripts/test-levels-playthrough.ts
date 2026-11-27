@@ -47,7 +47,10 @@ import {
 import {
   choosePaddleTarget,
   findSlantedTarget,
+  collectReachableBricks,
   collectReachableTargets,
+  collectRemainingBricks,
+  gapAimPointFor,
   findBreachTarget,
   findDeepestTarget,
   findDenseTarget,
@@ -59,15 +62,35 @@ import {
 } from '../src/game/ai/BotBrain.js';
 import type { TargetBrick } from '../src/game/ai/BotBrain.js';
 import { BUILTIN_LEVEL_COUNT, getBuiltinRuntimeConfig } from '../src/game/levels/builtinLevels.js';
+import { getBuiltinLevelStrategy } from '../src/game/levels/builtinLevelStrategies.js';
 
 /** 单关虚拟时长上限（秒）。 */
-const MAX_LEVEL_SECONDS = Number(process.env['BF_BOT_MAX_SECONDS'] ?? 900);
+const MAX_LEVEL_SECONDS = Number(process.env['BF_BOT_MAX_SECONDS'] ?? 240);
 /** 固定步长（与内核 `FIXED_DT` 一致）。 */
 const FRAME_DT = 1 / 60;
 /** 两次技能释放之间的最小帧数（0.3s）。 */
 const SKILL_COOLDOWN_FRAMES = 18;
-/** 在场球数上限：超过则不再补球（接球 AI 兜不住太多球）。 */
-const MAX_BALLS = Number(process.env['BF_BOT_MAX_BALLS'] ?? 8);
+/**
+ * 在场球数上限。
+ *
+ * 8 → 80：旧版锁死 8 球，砖阵吞吐被压到 1~3 块/秒，千砖关永远清不完。
+ * 放开到 80 之后，配合「球进入砖区即主动橙标裂变」形成多球群，
+ * 破砖速率可以提升一个数量级（物理池本身有 200 球上限）。
+ */
+const MAX_BALLS = Number(process.env['BF_BOT_MAX_BALLS'] ?? 80);
+/**
+ * 目标球群规模（按关卡砖量折算）。
+ *
+ * 单颗球每趟最多碎 1 块、往返约 1.5s → 约 0.67 块/秒。要在 240s 内清空
+ * N 块砖，需要约 `N / 0.67 / 240` 颗球同时有效工作，因此按砖量折算球数。
+ *
+ * 实测：`deep` 策略在第 20 关用 40 球 168s 通关（7.2 块/秒），而 8 球时
+ * 只能打到 19.3% —— 千砖关必须靠球群堆吞吐。图腾关（218~298 块）折算后
+ * 约 10 球即可，同样够用。
+ */
+const BALLS_PER_BUDGET = Number(process.env['BF_BOT_BALLS_PER_150'] ?? 30);
+const MIN_GROUP_BALLS = Number(process.env['BF_BOT_MIN_GROUP_BALLS'] ?? 4);
+const MAX_GROUP_BALLS = Number(process.env['BF_BOT_MAX_GROUP_BALLS'] ?? 40);
 /** 目标砖重选间隔（帧）。 */
 const RETARGET_FRAMES = 15;
 /** 停滞判定：连续多少秒没有击碎新砖即切换到随机探索。 */
@@ -77,22 +100,19 @@ const EXPLORE_FRAMES = 300;
 /** 残局阈值：剩余可破坏砖比例低于此值即切换到缝隙瞄准。 */
 const ENDGAME_RATIO = Number(process.env['BF_BOT_ENDGAME_RATIO'] ?? 0.25);
 /** 通过判据：每关至少破坏这个比例的可破坏砖（兜底，防止「0 进度也算过」）。 */
-const MIN_PROGRESS_RATIO = Number(process.env['BF_BOT_MIN_PROGRESS'] ?? 0.35);
-/** 通过判据：必须 20/20 全部真通关（用户需求口径）。 */
-const REQUIRE_ALL_WON = process.env['BF_BOT_REQUIRE_ALL_WON'] === '1';
+const MIN_PROGRESS_RATIO = Number(process.env['BF_BOT_MIN_PROGRESS'] ?? 0.95);
+/**
+ * 通过判据：必须 20/20 全部真通关（用户需求口径，默认开启）。
+ * 设 `BF_BOT_REQUIRE_ALL_WON=0` 可退回宽松档做对照实验。
+ */
+const REQUIRE_ALL_WON = process.env['BF_BOT_REQUIRE_ALL_WON'] !== '0';
 /** 至少要真通关的关卡数：守住「通关判定链路 + 复活续关链路可用」。 */
 const MIN_WON_LEVELS = Number(process.env['BF_BOT_MIN_WON'] ?? 1);
 /** 瞄准权重：接球数相同时，偏向能瞄到目标砖的落点。 */
-const AIM_WEIGHT = Number(process.env['BF_BOT_AIM_WEIGHT'] ?? 1.5);
-/** 目标选择策略：'auto' | 'widest' | 'dense' | 'gap' | 'breach' | 'deep' | 'onsight' | 'dense_gap'。 */
-/**
- * 默认目标策略。
- *
- * 'auto' 会按砖阵密度自动分流：稀疏图案（图腾/汉字）走「斜飞 + 看得见就打」，
- * 密集砖阵（迷宫/实心阵）走「破口钻进砖阵内部 + 反射命中 + 缝隙瞄准」。
- * 实测（900s）：auto 最低破砖率 51.0%，widest 最低 39.9% —— auto 更均衡，故取默认。
- */
-const STRATEGY = (process.env['BF_BOT_STRATEGY'] ?? 'auto') as
+const AIM_WEIGHT_ENV = process.env['BF_BOT_AIM_WEIGHT'];
+const AIM_WEIGHT_DEFAULT = 1.5;
+/** 目标选择策略。 */
+type Strategy =
   | 'widest'
   | 'dense'
   | 'gap'
@@ -100,10 +120,103 @@ const STRATEGY = (process.env['BF_BOT_STRATEGY'] ?? 'auto') as
   | 'deep'
   | 'onsight'
   | 'slanted'
+  | 'reflect'
   | 'auto'
-  | 'dense_gap';
-/** 复活补球数量：与游戏内「复活续关」一致。 */
-const REVIVE_BALL_COUNT = 3;
+  | 'dense_gap'
+  | 'bandit'
+  | 'per_level'
+  | 'sweep';
+
+/**
+ * 默认目标策略：'per_level'（按关卡查表）。
+ *
+ * 实测（240s 虚拟时长）：没有哪一种策略能通吃 20 关 ——
+ * `deep` 通关 {01,02,03,05,19,20}，`dense` 通关 {01,02,04,05,07,18}，
+ * `breach` 通关 {01,02,03,07,11,18,19}，三者并集才 10 关。
+ * 差异来自关卡结构（实心阵 vs 随机通道阵 vs 悬空图案），与单一策略的偏好
+ * 强相关。而「每球使用不同策略」实测更差（第 06 关 90.8% → 39.9%）：
+ * 一个挡板只有一个位置，多个互相冲突的瞄准目标会让接球与出射角互相妥协。
+ *
+ * 因此把「这关该怎么打」固化为关卡元数据（`builtinLevelStrategies.ts`，
+ * 由离线标定生成），机器人按关卡索引取用。`BF_BOT_STRATEGY` 指定具体
+ * 策略名则强制全程使用该策略（离线标定脚本靠这个做参数扫描）。
+ */
+const STRATEGY = (process.env['BF_BOT_STRATEGY'] ?? 'per_level') as Strategy;
+/** 自适应策略的候选池（逗号分隔）。 */
+const STRATEGY_POOL: Strategy[] = (
+  process.env['BF_BOT_STRATEGY_POOL'] ?? 'deep,breach,dense,widest,gap,slanted,onsight'
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter((s): s is Strategy => s.length > 0);
+/**
+ * 残局策略池：剩余砖很少时轮换尝试各种打法。
+ *
+ * 残局的砖大多被钢墙包住，直线路径打不到；但「乐观射线」分析显示它们**物理上
+ * 仍然可达**（路径需要先打碎中间挡路的砖）。所以残局不能只用缝隙/反射，
+ * 必须把所有打法都轮一遍：deep（打进砖阵内部连撞）、gap（擦边缝隙）、
+ * reflect（一次墙面反射）、breach（钻进破口）、dense（打高密度区）等。
+ */
+const ENDGAME_STRATEGY_POOL: Strategy[] = (
+  process.env['BF_BOT_ENDGAME_STRATEGY_POOL'] ?? 'deep,gap,reflect,breach,dense,slanted,onsight'
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter((s): s is Strategy => s.length > 0);
+/** 残局瞄准权重：残局砖少，宁可牺牲接球数也要打准。 */
+const ENDGAME_AIM_WEIGHT = Number(process.env['BF_BOT_ENDGAME_AIM_WEIGHT'] ?? 3);
+// 残局阈值逐关不同，由离线标定表 `builtinLevelStrategies.ts` 给出；
+// 这里只保留 env 全局覆盖入口（`BF_BOT_ENDGAME_SWITCH_RATIO`）。
+/**
+ * 残局触发的「速率阈值」（块/秒）：最近 15s 破砖速率低于此值即视为打不动了。
+ *
+ * 固定比例对不同关卡并不通用：实测第 12 关在剩余 20% 时就已陷入低效循环
+ * （固定阈值 0.12 时差 1 块没清掉，阈值调到 0.2 立刻通关）；
+ * 而第 19 关能稳定打到 99%，过早收缩球群反而掉吞吐（0.2 时退回 97.4%）。
+ *
+ * 默认关闭（0）：实测按速率触发会在第 19/20 关开局阶段就误判「打不动」
+ * （破砖率掉到 52%）。最终改为**逐关标定**残局阈值（见 builtinLevelStrategies）。
+ */
+const ENDGAME_RATE_THRESHOLD = Number(process.env['BF_BOT_ENDGAME_RATE'] ?? 0);
+/** 速率判据的最早生效时间（秒）：开局吞吐还没起来，别急着进残局。 */
+const ENDGAME_RATE_MIN_SEC = Number(process.env['BF_BOT_ENDGAME_RATE_MIN_SEC'] ?? 30);
+/**
+ * 进入「逐砖清场」模式的剩余砖数阈值。
+ *
+ * 残局池（缝隙 / 反射）适合几十块砖的规模；再往下就只剩十几块，
+ * 此时最有效的做法是**把剩下的砖逐块列出来逐个瞄准**（'sweep' 策略），
+ * 而不是继续在候选集里挑一块 —— 挑来挑去总会漏掉翼尖凹角里的最后几块。
+ * 实测 14 个关卡都卡在 99% 附近（第 05 关只差 1 块），卡点全在这里。
+ */
+const SWEEP_MAX_BRICKS = Number(process.env['BF_BOT_SWEEP_MAX_BRICKS'] ?? 24);
+/** 逐砖清场时，一块砖连续打不到多久就换下一块（帧）。 */
+const SWEEP_STALL_FRAMES = Number(process.env['BF_BOT_SWEEP_STALL_FRAMES'] ?? 90);
+/** 残局阶段最多接住几颗球：1 = 只兜住最紧急的一颗，其余放过（压回单球精度）。 */
+const ENDGAME_MAX_CATCHES = Number(process.env['BF_BOT_ENDGAME_MAX_CATCHES'] ?? 1);
+/**
+ * 残局阶段复活时补的球数。
+ *
+ * 残局要的是**精度**而不是吞吐：实测单球时出射角误差 P90 只有 0.25°，
+ * 多球（12 颗）时同一指标会飙到 29° —— 球一多，接球与瞄准互相妥协，
+ * 最后那几块砖怎么瞄都打不中。残局漏球后只补 1 颗，把球群压回单球精度。
+ */
+const ENDGAME_REVIVE_BALLS = Number(process.env['BF_BOT_ENDGAME_REVIVE_BALLS'] ?? 1);
+/** 残局停滞补球的最小间隔（帧）与触发时的最少球数。 */
+const ENDGAME_REFILL_FRAMES = 120;
+const ENDGAME_REFILL_MIN_BALLS = 3;
+/** 残局策略池轮换间隔（秒）。 */
+const ENDGAME_STRATEGY_SECONDS = Number(process.env['BF_BOT_ENDGAME_STRATEGY_SEC'] ?? 2);
+/** 自适应策略的评估分段长度（秒）：每段结算一次破砖速率。 */
+const STRATEGY_SEGMENT_SECONDS = Number(process.env['BF_BOT_STRATEGY_SEGMENT_SEC'] ?? 6);
+/** 锁定历史最优后仍保留的随机探索概率（避免策略分布随关卡变化而僵化）。 */
+const STRATEGY_EXPLORE_PROB = Number(process.env['BF_BOT_STRATEGY_EXPLORE_PROB'] ?? 0.2);
+/**
+ * 复活补球数量（机器人侧策略）。
+ * 游戏内「复活续关」给 3 球（见 core 的 REVIVE_BALL_COUNT），机器人一次只补 3 球会
+ * 让球群反复塌缩重建（实测存活球长期只有 1 颗，吞吐上不去）。这里让机器人一次
+ * 补足一个可用的球群；不影响游戏内数值，只影响回归脚本的接球策略。
+ */
+const REVIVE_BALL_COUNT = Number(process.env['BF_BOT_REVIVE_BALLS'] ?? 8);
 /** 临近击球的锁定窗口（秒）：该窗口内固定目标与出射角。 */
 const AIM_LOCK_SEC = Number(process.env['BF_BOT_AIM_LOCK_SEC'] ?? 0);
 /** 砖阵密度阈值：低于该值视为「稀疏图案」，改用「看得见就打」策略。 */
@@ -130,6 +243,19 @@ const DEBUG = process.env['BF_BOT_DEBUG'] === '1';
 const LEVEL_FILTER = process.env['BF_BOT_LEVELS'];
 
 /**
+ * 逐砖清场（'sweep'）状态：当前瞄准的砖、轮转游标、是否强制换下一块。
+ *
+ * 「逐砖清场」把剩余可破坏砖按「血量少 → 距离近」列成清单逐块瞄准：
+ * 残局只剩十几块时，在候选集里反复挑反而会漏掉翼尖凹角里的最后几块
+ * （实测 14 个关卡都卡在 99% 附近，第 05 关只差 1 块）。
+ */
+let sweepTarget: TargetBrick | null = null;
+let sweepCursor = -1;
+let sweepForceNext = false;
+/** 当前 sweep 目标是否能直线命中（能 → 瞄砖心；不能 → 瞄角外侧缝隙点）。 */
+let sweepDirectHit = true;
+
+/**
  * 目标选择：按阶段切换策略。
  *
  * - 常规阶段（'dense_gap'）：优先打进**砖阵内部的高密度格**，让球一次飞行连撞多块；
@@ -140,11 +266,52 @@ function selectTarget(
   engine: GameEngine,
   originX: number,
   originY: number,
-  strategy: typeof STRATEGY,
+  strategy: Strategy,
   allowBreach = true,
 ): TargetBrick | null {
   const grid = engine.grid;
   const fallback = () => findReachableTarget(grid, originX, originY);
+  if (strategy === 'bandit') return fallback();
+  if (strategy === 'reflect') return findReflectTarget(grid, originX, originY) ?? fallback();
+  if (strategy === 'sweep') {
+    if (process.env['BF_BOT_TRACE'] === '1') {
+      process.stdout.write(`[sweep] 剩余 ${grid.remainingBreakable} 目标 ${sweepTarget ? `${sweepTarget.col},${sweepTarget.row}` : 'null'}\n`);
+    }
+    // 逐砖清场：把**全部**剩余可破坏砖按「血量少 → 靠近上沿」列成清单逐块瞄准。
+    //
+    // 注意这里不能用「直线可达砖」做清单 —— 残局最后几块往往被钢墙包死、
+    // 直线根本够不到，只扫直线可达砖会让这几块永远打不掉（实测第 03/08/17 关
+    // 正是差最后 2~5 块清不掉）。所以清单取全部剩余砖：
+    //   · 直线够得到 → 瞄砖心（命中精度最高）；
+    //   · 够不到     → 瞄该砖的「角外侧缝隙点」（擦边命中）。
+    const remaining = collectRemainingBricks(grid);
+    if (remaining.length === 0) {
+      return findReflectTarget(grid, originX, originY) ?? fallback();
+    }
+    const current = sweepTarget;
+    const stillThere =
+      current !== null &&
+      remaining.some((b) => b.col === current.col && b.row === current.row);
+    // 当前这块还在、且没有停滞 → 继续打它（2 血砖要打两次，不能急着换）
+    if (current && stillThere && !sweepForceNext) {
+      if (sweepDirectHit) return current;
+      const gap = gapAimPointFor(grid, current, originX, originY);
+      return gap ? { ...current, x: gap.x, y: gap.y } : current;
+    }
+    sweepCursor = (sweepCursor + 1) % remaining.length;
+    const brick = remaining[sweepCursor] ?? null;
+    sweepTarget = brick;
+    sweepForceNext = false;
+    if (!brick) return findReflectTarget(grid, originX, originY) ?? fallback();
+    // 直线够得到 → 瞄砖心（精度最高）；够不到 → 瞄角外侧缝隙点（擦边命中）。
+    const direct = collectReachableBricks(grid, originX, originY).some(
+      (b) => b.col === brick.col && b.row === brick.row,
+    );
+    sweepDirectHit = direct;
+    if (direct) return brick;
+    const gap = gapAimPointFor(grid, brick, originX, originY);
+    return gap ? { ...brick, x: gap.x, y: gap.y } : brick;
+  }
   if (strategy === 'widest') return fallback();
   if (strategy === 'gap') return findGapTarget(grid, originX, originY) ?? fallback();
   if (strategy === 'dense') return findDenseTarget(grid, originX, originY) ?? fallback();
@@ -249,6 +416,24 @@ function playLevel(index: number): LevelReport {
   const engine = new GameEngine({ level, rng });
 
   const total = engine.grid.totalBreakable;
+  /**
+   * 目标球群规模：按砖量折算并夹紧。
+   * 球太多接不住（漏球 → LOST → 球群塌缩），球太少清不完千砖关。
+   */
+  // 标定表可以逐关覆盖球群规模下限（`minGroupBalls`）——
+  // 球群规模是第三个影响通关的维度：球太多接不住（漏球 → 球群塌缩），
+  // 球太少清不完千砖关。
+  const planRef = getBuiltinLevelStrategy(index);
+  // `minGroupBalls` 是标定表给出的**目标球群规模**（直接设定，不是下限）：
+  // 球太多接不住（漏球 → 球群塌缩），球太少清不完千砖关。
+  const targetBalls =
+    planRef.minGroupBalls && planRef.minGroupBalls > 0
+      ? Math.min(MAX_GROUP_BALLS, Math.max(MIN_GROUP_BALLS, planRef.minGroupBalls))
+      : Math.max(MIN_GROUP_BALLS, Math.min(MAX_GROUP_BALLS, Math.round(total / BALLS_PER_BUDGET)));
+  // 逐砖清场状态按关重置
+  sweepTarget = null;
+  sweepCursor = -1;
+  sweepForceNext = false;
   const halfWidth = engine.paddle.width * 0.5;
   const paddleTop = engine.paddle.y - engine.paddle.height * 0.5;
 
@@ -281,9 +466,78 @@ function playLevel(index: number): LevelReport {
     return best;
   };
 
+  /**
+   * 砖阵底沿 Y：球心越过这条线即算「进入砖区」。
+   *
+   * 橙标裂变必须发生在球已经进入砖区之后 —— 此时分裂出的新球带着原有
+   * 方向继续冲进砖阵，立刻产生破坏；若在下方战场分裂，新球只是原地散开。
+   */
+  const brickZoneBottom = engine.grid.originY + engine.grid.rows * engine.grid.cellSize;
+  const ballsInBrickZone = (): number => {
+    let n = 0;
+    for (const ball of engine.physics.balls) {
+      if (ball.active && ball.y < brickZoneBottom) n++;
+    }
+    return n;
+  };
+
   // 初始瞄准：直接对准第一块可达目标砖
   const initialOrigin = rayOrigin();
-  let target: TargetBrick | null = selectTarget(engine, initialOrigin.x, initialOrigin.y, STRATEGY);
+  // 自适应策略状态：每种策略的破砖速率 EMA（指数滑动平均）。
+  const strategyScores = new Map<Strategy, number>();
+  // 本关的推荐打法（目标策略 + 残局阈值），由离线标定表给出。
+  const levelPlan = getBuiltinLevelStrategy(index);
+  let currentStrategy: Strategy =
+    STRATEGY === 'bandit'
+      ? (STRATEGY_POOL[0] ?? 'widest')
+      : STRATEGY === 'per_level'
+        ? levelPlan.strategy
+        : STRATEGY;
+  /** 本关进入残局模式的剩余砖比例阈值（env 可全局覆盖）。 */
+  const endgameRatio = Number(
+    process.env['BF_BOT_ENDGAME_SWITCH_RATIO'] ?? levelPlan.endgameRatio,
+  );
+  /**
+   * 本关的瞄准权重（标定表优先，其次 env，最后默认值）。
+   * 标定脚本传 0 表示「沿用表里的值」，所以这里把 0 视为未指定。
+   */
+  const aimWeight =
+    levelPlan.aimWeight && levelPlan.aimWeight > 0
+      ? levelPlan.aimWeight
+      : AIM_WEIGHT_ENV !== undefined && Number(AIM_WEIGHT_ENV) > 0
+        ? Number(AIM_WEIGHT_ENV)
+        : AIM_WEIGHT_DEFAULT;
+  let segmentStartFrame = 0;
+  let segmentStartDestroyed = 0;
+  /**
+   * 选出下一个要试的策略。
+   *
+   * 先轮询探索所有候选（每种策略至少被公平地试一次），
+   * 之后锁定历史 EMA 最优者，并保留 `STRATEGY_EXPLORE_PROB` 的随机探索。
+   */
+  const pickNextStrategy = (): Strategy => {
+    if (STRATEGY_POOL.length === 0) return currentStrategy;
+    for (const candidate of STRATEGY_POOL) {
+      if (!strategyScores.has(candidate)) return candidate;
+    }
+    let best: Strategy = STRATEGY_POOL[0]!;
+    let bestScore = -Infinity;
+    for (const candidate of STRATEGY_POOL) {
+      const score = strategyScores.get(candidate) ?? -Infinity;
+      if (score > bestScore) {
+        best = candidate;
+        bestScore = score;
+      }
+    }
+    if (rng() < STRATEGY_EXPLORE_PROB) {
+      const others = STRATEGY_POOL.filter((s) => s !== best);
+      const picked = others[Math.floor(rng() * others.length)];
+      if (picked) return picked;
+    }
+    return best;
+  };
+
+  let target: TargetBrick | null = selectTarget(engine, initialOrigin.x, initialOrigin.y, currentStrategy);
   if (target) {
     const deg =
       (Math.atan2(target.x - initialOrigin.x, initialOrigin.y - target.y) * 180) / Math.PI;
@@ -291,7 +545,11 @@ function playLevel(index: number): LevelReport {
   }
   engine.releaseBall();
 
-  // 每球独立目标（按夹角分区分配）：球群覆盖不同区域，而不是全部抢同一块砖
+  // 每球独立目标（按夹角分区分配）：球群覆盖不同区域，而不是全部抢同一块砖。
+  //
+  // 注意：曾经试过「每球使用不同策略」（deep/gap/widest/... 轮转），实测**更差**
+  // （第 06 关 90.8% → 39.9%）：一个挡板只有一个位置，多个互相冲突的瞄准目标
+  // 会让接球与出射角互相妥协。策略多样性必须放在**关卡之间**，不能放在球之间。
   const targetsByBall: Array<TargetBrick | null> = new Array(engine.physics.balls.length).fill(null);
   const assignBallTargets = (originX: number, originY: number): void => {
     targetsByBall.fill(null);
@@ -316,6 +574,16 @@ function playLevel(index: number): LevelReport {
   let multiUsed = 0;
   let tripleUsed = 0;
   let brickHits = 0;
+  /**
+   * 最近 15 秒的破砖速率（块/秒）。
+   *
+   * 用来判断「这一关是不是已经打不动了」：有的关卡（实测第 12 关）在剩余 20%
+   * 时就已经陷入低效循环，此时必须提前切到「单球精度模式」；而另一些关卡
+   * （实测第 19 关）能一直稳定打到 99%，过早收缩球群反而掉吞吐。
+   * 用速率而不是固定比例来触发，能自适应这两种关卡。
+   */
+  const rateWindow: number[] = [];
+  let recentRate = Number.POSITIVE_INFINITY;
   let exploreFrames = 0;
   let framesSinceHit = 0;
   let edgeKickFrames = 0;
@@ -325,9 +593,54 @@ function playLevel(index: number): LevelReport {
   let hasNaN = false;
   let reviveCount = 0;
 
+  let endgameCursor = 0;
+  let lastEndgameRefillFrame = 0;
+  let endgameStrategyStartFrame = 0;
+  let endgameStrategy: Strategy = ENDGAME_STRATEGY_POOL[0] ?? 'gap';
+
   while (engine.elapsedTimeSec < MAX_LEVEL_SECONDS) {
+    // 残局判定：剩余砖极少时改用「缝隙瞄准 + 一次墙面反射」策略池，
+    // 并且停止释放技能（球越多越难瞄准，残局需要的是精度而不是吞吐）。
+    const remainingRatio =
+      total > 0 ? engine.grid.remainingBreakable / total : 0;
+    // 触发条件二选一：
+    //   1) 剩余比例够低（固定阈值）；
+    //   2) 最近 15s 破砖速率已经掉到阈值以下（说明这一关「打不动了」，
+    //      该提前切到单球精度模式 —— 固定比例对不同关卡并不通用）。
+    const inEndgame =
+      remainingRatio <= endgameRatio ||
+      (recentRate < ENDGAME_RATE_THRESHOLD && engine.elapsedTimeSec > ENDGAME_RATE_MIN_SEC);
+    // 再往下只剩十几块 → 进入「逐砖清场」：把剩余砖逐块列出来逐个瞄准。
+    const inSweep = engine.grid.remainingBreakable > 0 && engine.grid.remainingBreakable <= SWEEP_MAX_BRICKS;
+    if (inSweep) {
+      currentStrategy = 'sweep';
+    } else if (inEndgame) {
+      if (frames - endgameStrategyStartFrame >= ENDGAME_STRATEGY_SECONDS * 60) {
+        endgameStrategyStartFrame = frames;
+        endgameCursor = (endgameCursor + 1) % Math.max(1, ENDGAME_STRATEGY_POOL.length);
+        endgameStrategy = ENDGAME_STRATEGY_POOL[endgameCursor] ?? 'gap';
+      }
+      currentStrategy = endgameStrategy;
+    }
+
+    // 自适应策略：每 STRATEGY_SEGMENT_SECONDS 秒结算当前策略的破砖速率，
+    // 更新 EMA 后切换到下一个策略（先轮询探索，之后锁定历史最优）。
+    if (STRATEGY === 'bandit' && frames - segmentStartFrame >= STRATEGY_SEGMENT_SECONDS * 60) {
+      const destroyedNow = total - engine.remainingBreakable;
+      const rate = (destroyedNow - segmentStartDestroyed) / STRATEGY_SEGMENT_SECONDS;
+      const previous = strategyScores.get(currentStrategy) ?? rate;
+      strategyScores.set(currentStrategy, previous * 0.5 + rate * 0.5);
+      currentStrategy = pickNextStrategy();
+      segmentStartFrame = frames;
+      segmentStartDestroyed = destroyedNow;
+    }
+
     // 停滞判定：太久没打碎新砖 → 进入「脱困模式」（禁用破口 + 边缘小角度扰动）
     const stalled = framesSinceHit >= STALL_SECONDS * 60;
+    // 逐砖清场时，某块砖连续打不到就换下一块（否则会死盯一块够不着的砖）。
+    if (currentStrategy === 'sweep' && framesSinceHit >= SWEEP_STALL_FRAMES) {
+      sweepForceNext = true;
+    }
 
     // 防死循环偏角扰动：连续 STALL_SECONDS 秒没打碎新砖 → 改用挡板边缘击球，
     // 用 ±62° 的大入射角交替轰击，打破「球在腔室里对称弹跳」的死循环。
@@ -359,7 +672,7 @@ function playLevel(index: number): LevelReport {
       assignBallTargets(origin.x, origin.y);
     } else if (frames % RETARGET_FRAMES === 0) {
       const origin = rayOrigin();
-      const next = selectTarget(engine, origin.x, origin.y, STRATEGY, !stalled);
+      const next = selectTarget(engine, origin.x, origin.y, currentStrategy, !stalled);
       if (next) target = next;
       assignBallTargets(origin.x, origin.y);
     }
@@ -389,7 +702,7 @@ function playLevel(index: number): LevelReport {
         engine,
         imminent.contactX,
         paddleTop - BALL_RADIUS,
-        STRATEGY,
+        currentStrategy,
         !stalled,
       );
       if (locked) {
@@ -412,7 +725,7 @@ function playLevel(index: number): LevelReport {
             target,
             targetsByBall,
             maxDeflectDeg: PADDLE_MAX_DEFLECT_DEG,
-            aimWeight: AIM_WEIGHT,
+            aimWeight,
           }),
         );
       }
@@ -427,19 +740,53 @@ function playLevel(index: number): LevelReport {
           target,
           targetsByBall,
           maxDeflectDeg: PADDLE_MAX_DEFLECT_DEG,
-          aimWeight: AIM_WEIGHT,
+          aimWeight: inEndgame ? ENDGAME_AIM_WEIGHT : aimWeight,
+          // 残局只兜住最紧急的一颗球，多余的放过让球群收缩回单球精度
+          maxCatches: inEndgame ? ENDGAME_MAX_CATCHES : undefined,
         }),
       );
     }
 
-    // 技能节奏：球数不足时补球
-    if (cooldown <= 0 && USE_SKILLS) {
+    // 技能节奏：
+    //   1) **球群已进入砖区 → 主动橙标裂变**：分裂出的新球带着原有方向继续
+    //      冲进砖阵，立刻产生破坏，是提升破砖吞吐最有效的一招；
+    //   2) 场上几乎没球 → 蓝标连发补一批新球；
+    //   3) 没有球在砖区（球全在下方战场）→ 蓝标连发补一批新球冲进砖阵。
+    // 残局补球：残局模式会把球群收缩到 1 球（精度优先），但如果这颗球
+    // 卡在砖阵里回不到挡板，就没有「即将落下的球」可供瞄准 —— 机器人会
+    // 一直干等（实测第 03 关最后 3 块砖 240s 内零命中）。
+    // 因此残局停滞超过一定时间且场上球太少时，补一批球回战场。
+    if (
+      USE_SKILLS &&
+      inEndgame &&
+      stalled &&
+      frames - lastEndgameRefillFrame >= ENDGAME_REFILL_FRAMES &&
+      engine.activeBallCount < ENDGAME_REFILL_MIN_BALLS
+    ) {
+      const inventory = engine.skillInventory;
+      if (inventory.multiLaunchCount > 0) {
+        if (engine.useMultiLaunch().used) {
+          multiUsed++;
+          lastEndgameRefillFrame = frames;
+          cooldown = SKILL_COOLDOWN_FRAMES;
+        }
+      }
+    }
+    if (cooldown <= 0 && USE_SKILLS && !inEndgame) {
       const inventory = engine.skillInventory;
       const count = engine.activeBallCount;
-      if (count < 2 && inventory.tripleSplitCount > 0) {
+      const inZone = ballsInBrickZone();
+      if (
+        inZone > 0 &&
+        inventory.tripleSplitCount > 0 &&
+        count * 3 <= targetBalls
+      ) {
         if (engine.useTripleSplit().used) tripleUsed++;
         cooldown = SKILL_COOLDOWN_FRAMES;
-      } else if (count < MAX_BALLS && inventory.multiLaunchCount > 0) {
+      } else if (count < 2 && inventory.multiLaunchCount > 0) {
+        if (engine.useMultiLaunch().used) multiUsed++;
+        cooldown = SKILL_COOLDOWN_FRAMES;
+      } else if (inZone === 0 && count < targetBalls && inventory.multiLaunchCount > 0) {
         if (engine.useMultiLaunch().used) multiUsed++;
         cooldown = SKILL_COOLDOWN_FRAMES;
       }
@@ -454,22 +801,59 @@ function playLevel(index: number): LevelReport {
     framesSinceHit++;
 
     // 事件统计：击碎计数用于停滞判定，NaN 检测用于回归守门
+    let destroyedThisFrame = 0;
     for (const event of engine.drainEvents()) {
       if (event.type === 'BRICK_HIT') {
         brickHits++;
         // 只有「真的打碎一块」才算进展：撞上多血砖只是掉血，砖还在，
         // 不应该判定为「有进展」——否则停滞检测与防死循环扰动会被高频触发。
+        //
+        // 例外：逐砖清场（sweep）时，命中**当前瞄准的那块砖**也算进展 ——
+        // 2 血砖要打两次，第一次命中后砖还在，若此时判定为停滞，
+        // 防死循环扰动会把挡板推到边缘打断瞄准，形成「永远打不掉」的活锁。
         if (event.destroyed) {
+          framesSinceHit = 0;
+          exploreFrames = 0;
+          destroyedThisFrame++;
+        } else if (process.env['BF_BOT_TRACE'] === '1' && engine.elapsedTimeSec > MAX_LEVEL_SECONDS - 6) {
+          process.stdout.write(`[hit] ${event.col},${event.row} destroyed=${event.destroyed} 剩余 ${engine.grid.remainingBreakable}\n`);
+        } else if (
+          currentStrategy === 'sweep' &&
+          sweepTarget !== null &&
+          event.col === sweepTarget.col &&
+          event.row === sweepTarget.row
+        ) {
           framesSinceHit = 0;
           exploreFrames = 0;
         }
       }
+    }
+    // 破砖速率窗口：每 60 帧（1 秒）记一格，保留最近 15 格 → 最近 15s 的块/秒
+    if (frames % 60 === 0) {
+      rateWindow.push(destroyedThisFrame);
+      if (rateWindow.length > 15) rateWindow.shift();
+      let sum = 0;
+      for (const v of rateWindow) sum += v;
+      recentRate = sum / rateWindow.length;
     }
     for (const ball of engine.physics.balls) {
       if (!ball.active) continue;
       if (!Number.isFinite(ball.x) || !Number.isFinite(ball.y) || !Number.isFinite(ball.vx) || !Number.isFinite(ball.vy)) {
         hasNaN = true;
       }
+    }
+
+    if (DEBUG && inEndgame && frames % 60 === 0) {
+      const left: string[] = [];
+      for (let r = 0; r < engine.grid.rows; r++) {
+        for (let c = 0; c < engine.grid.cols; c++) {
+          const cell = engine.grid.at(c, r);
+          if (cell && cell.role !== 'EMPTY' && cell.role !== 'STEEL') {
+            left.push(`${c},${r}(hp${cell.hp})`);
+          }
+        }
+      }
+      process.stdout.write(`    [endgame] 剩余 ${left.length}: ${left.join(' ')}\n`);
     }
 
     if (TRACE && frames % 1800 === 0) {
@@ -488,10 +872,11 @@ function playLevel(index: number): LevelReport {
     if (engine.activeBallCount > peakBalls) peakBalls = engine.activeBallCount;
     if (engine.currentPhase === 'WON') break;
     if (engine.currentPhase === 'LOST') {
-      // 与游戏内「复活续关」走同一条通路：保留残局进度，补 3 个球继续打。
+      // 与游戏内「复活续关」走同一条通路：保留残局进度，补球继续打。
       // 机器人不认输，才能把整关打通（否则一次漏球就前功尽弃）。
+      // 残局阶段只补 1 颗：把球群压回单球精度（见 ENDGAME_REVIVE_BALLS 注释）。
       reviveCount++;
-      if (!engine.revive(REVIVE_BALL_COUNT)) break;
+      if (!engine.revive(inEndgame ? ENDGAME_REVIVE_BALLS : REVIVE_BALL_COUNT)) break;
       engine.releaseBall();
       continue;
     }

@@ -21,11 +21,35 @@ import type { Ball } from '../core/types.js';
 /** 目标选取策略：'widest' 优先选偏离垂直轴最远的目标，'nearest' 优先选最近目标。 */
 export type TargetStrategy = 'widest' | 'nearest';
 
+/**
+ * 机器人目标策略全集。
+ *
+ * 实测（20 关 × 240s 虚拟时长）没有任何单一策略能通吃全部关卡：
+ * `deep` 通 {01,02,03,05,19,20}、`dense` 通 {01,02,04,05,07,18}、
+ * `breach` 通 {01,02,03,07,11,18,19}、`gap` 通 {01,03,04,18}、
+ * `slanted` 通 {01,03,05,12,18}、`onsight` 通 {01,02,04,18}。
+ * 差异来自关卡结构（实心阵 / 随机通道阵 / 悬空图案），因此每关的推荐
+ * 策略由离线标定写入 `src/game/levels/builtinLevelStrategies.ts`。
+ */
+export type BotStrategy =
+  | 'widest'
+  | 'dense'
+  | 'gap'
+  | 'breach'
+  | 'deep'
+  | 'onsight'
+  | 'slanted'
+  | 'reflect'
+  | 'auto'
+  | 'dense_gap';
+
 export interface TargetBrick {
   col: number;
   row: number;
   x: number;
   y: number;
+  /** 剩余血量（残局逐砖清理时优先打 1 血砖）。 */
+  hp?: number;
 }
 
 /** 缝隙瞄准的角点外扩量（px）：球心落在砖角外侧这么远仍算命中。 */
@@ -208,6 +232,28 @@ export interface PaddleDecisionParams {
    * 权重越大越偏向瞄准，代价是可能漏掉个别下落球。
    */
   aimWeight?: number;
+  /**
+   * 每球独立目标（与 `balls` 下标一一对应；`null` 项回退到统一 `target`）。
+   *
+   * 多球群专用：让每颗球去撞各自区域的砖，球群覆盖面成倍扩大，
+   * 而不是全部抢同一块砖（否则多球只是重复同一发）。
+   */
+  targetsByBall?: Array<TargetBrick | null>;
+  /**
+   * 低空球兜底阈值（秒）：到达挡板的时间小于该值的球视为「必须兜住」。
+   *
+   * 球多时挡板一次只能覆盖 1~2 颗球，「接住几颗」几乎无法区分候选，
+   * 真正决定生死的是**别漏掉马上要落地的那颗**（漏一颗即可能全场阵亡）。
+   */
+  urgencySec?: number;
+  /**
+   * 最多接住几颗球（默认不限）。
+   *
+   * 残局用：球群越少，单球出射角越准（实测单球 P90 误差 0.25°，12 球时 29°）。
+   * 把上限压到 1，接球 AI 就会「只兜住最紧急的那颗、其余放过」，
+   * 多余球漏出底线后球群自然收缩到 1~2 颗，精度随之回来。
+   */
+  maxCatches?: number;
 }
 
 /**
@@ -224,17 +270,26 @@ export interface PaddleDecisionParams {
 export function choosePaddleTarget(params: PaddleDecisionParams): number {
   const { balls, paddleX, paddleTop, halfWidth, followSpeed, target, maxDeflectDeg } = params;
   const aimWeight = params.aimWeight ?? 1;
+  const urgencySec = params.urgencySec ?? 0.6;
+  /** 最多接住几颗球（残局用 1，把球群压回单球精度）。 */
+  const maxCatches = params.maxCatches ?? Number.POSITIVE_INFINITY;
+  /** 兜住低空球的额外权重（以「多接住一颗球」为 1 个单位）。 */
+  const urgencyBonus = 2;
+  const targetsByBall = params.targetsByBall;
 
   interface Arrival {
     t: number;
     contactX: number;
+    /** 在 `balls` 中的下标，用于取每球独立目标。 */
+    ballIndex: number;
   }
   const arrivals: Arrival[] = [];
-  for (const ball of balls) {
+  for (let i = 0; i < balls.length; i++) {
+    const ball = balls[i]!;
     if (!ball.active || ball.vy <= 0) continue;
     const gap = paddleTop - ball.y - ball.radius;
     const t = gap > 0 ? gap / ball.vy : 0;
-    arrivals.push({ t, contactX: predictContactX(ball, paddleTop) });
+    arrivals.push({ t, contactX: predictContactX(ball, paddleTop), ballIndex: i });
   }
   if (arrivals.length === 0) return paddleX;
   arrivals.sort((a, b) => a.t - b.t);
@@ -242,30 +297,54 @@ export function choosePaddleTarget(params: PaddleDecisionParams): number {
   const candidates: Array<{ x: number; aimed: boolean }> = [];
   for (const arrival of arrivals) {
     candidates.push({ x: arrival.contactX, aimed: false });
-    if (target) {
+    const ballTarget = targetsByBall?.[arrival.ballIndex] ?? target;
+    if (ballTarget) {
       const desiredDeg =
-        (Math.atan2(target.x - arrival.contactX, paddleTop - target.y) * 180) / Math.PI;
+        (Math.atan2(ballTarget.x - arrival.contactX, paddleTop - ballTarget.y) * 180) / Math.PI;
       const clamped = Math.max(-maxDeflectDeg, Math.min(maxDeflectDeg, desiredDeg));
-      candidates.push({ x: arrival.contactX - (clamped / maxDeflectDeg) * halfWidth, aimed: true });
+      candidates.push({
+        x: arrival.contactX - (clamped / maxDeflectDeg) * halfWidth,
+        aimed: true,
+      });
     }
   }
 
   let bestX = paddleX;
-  let bestScore = -1;
+  let bestScore = -Infinity;
+  /** 兜不住任何低空球时的退路（全体候选里的最优解）。 */
+  let fallbackX = paddleX;
+  let fallbackScore = -Infinity;
   for (const candidate of candidates) {
     let catches = 0;
+    let urgentCaught = false;
+    let urgentMissed = false;
     for (const arrival of arrivals) {
-      if (Math.abs(candidate.x - paddleX) > followSpeed * arrival.t) continue;
-      if (Math.abs(arrival.contactX - candidate.x) > halfWidth) continue;
-      catches++;
+      const reachable = Math.abs(candidate.x - paddleX) <= followSpeed * arrival.t;
+      const covered = Math.abs(arrival.contactX - candidate.x) <= halfWidth;
+      if (reachable && covered) {
+        if (catches < maxCatches) catches++;
+        if (arrival.t <= urgencySec) urgentCaught = true;
+      } else if (arrival.t <= urgencySec) {
+        urgentMissed = true;
+      }
     }
-    const score = catches + (candidate.aimed ? aimWeight : 0);
-    if (score > bestScore) {
+    let score = catches + (candidate.aimed ? aimWeight : 0);
+    if (urgentCaught) score += urgencyBonus;
+    else if (urgentMissed) score -= urgencyBonus;
+    if (score > fallbackScore) {
+      fallbackScore = score;
+      fallbackX = candidate.x;
+    }
+    // **低空球兜底是硬约束**：只要存在能兜住低空球的候选，就只在这些候选里
+    // 择优，绝不因为「更瞄准」而放弃马上要落地的球。
+    // 之前只是加了个权重（+2），瞄准权重一旦变大（残局用 3）就会压过它 ——
+    // 实测挡板会直奔远处的目标，把 0.1s 后落地的球放过去漏掉。
+    if (urgentCaught && score > bestScore) {
       bestScore = score;
       bestX = candidate.x;
     }
   }
-  return bestX;
+  return bestScore > -Infinity ? bestX : fallbackX;
 }
 
 /**
@@ -511,6 +590,49 @@ export function findGapTarget(
 }
 
 /**
+ * 指定某块砖的最佳「角外侧瞄准点」。
+ *
+ * 残局清场时需要**按砖**挑选目标：直线够不到的残砖通常只露一角，
+ * 瞄准点必须落在砖的角外侧（`CORNER_AIM_OFFSET`），否则球会被旁边的
+ * 钢墙先撞开。返回 null 表示这块砖当前连角点都够不到。
+ */
+export function gapAimPointFor(
+  grid: BrickGrid,
+  brick: TargetBrick,
+  originX: number,
+  originY: number,
+  maxAngleDeg = 68,
+): { x: number; y: number } | null {
+  const rect = grid.cellRect(brick.col, brick.row);
+  if (!rect) return null;
+  const corners: Array<[number, number]> = [
+    [rect.x - CORNER_AIM_OFFSET, rect.y - CORNER_AIM_OFFSET],
+    [rect.x + rect.width + CORNER_AIM_OFFSET, rect.y - CORNER_AIM_OFFSET],
+    [rect.x - CORNER_AIM_OFFSET, rect.y + rect.height + CORNER_AIM_OFFSET],
+    [rect.x + rect.width + CORNER_AIM_OFFSET, rect.y + rect.height + CORNER_AIM_OFFSET],
+  ];
+  const scored = corners
+    .map(([ax, ay]) => {
+      const angleDeg = (Math.atan2(ax - originX, originY - ay) * 180) / Math.PI;
+      return { ax, ay, angleDeg };
+    })
+    .filter((c) => Math.abs(c.angleDeg) <= maxAngleDeg)
+    // 垂直优先（命中精度最高），其次夹角最大（能擦到墙）。
+    .sort((a, b) => {
+      const verticalA = Math.abs(a.angleDeg);
+      const verticalB = Math.abs(b.angleDeg);
+      if (Math.abs(verticalA - verticalB) > 6) return verticalA - verticalB;
+      return Math.abs(b.angleDeg) - Math.abs(a.angleDeg);
+    });
+  for (const candidate of scored) {
+    if (gapReachable(grid, originX, originY, { x: candidate.ax, y: candidate.ay, col: brick.col, row: brick.row })) {
+      return { x: candidate.ax, y: candidate.ay };
+    }
+  }
+  return null;
+}
+
+/**
  * 缝隙候选的可达性：沿 origin → 角点的射线步进，
  * 途中遇到「目标砖邻域之外的实体」才算挡路。
  *
@@ -730,6 +852,64 @@ export function collectReachableTargets(
       result.push({ col: candidate.col, row: candidate.row, x: candidate.x, y: candidate.y });
     }
   }
+  return result;
+}
+
+/**
+ * 列出全部**剩余**的可破坏砖（排除空位与钢墙）。
+ *
+ * 残局逐砖清理用：先把剩下的砖列出来，再按「血量少 → 距离近」的顺序逐块瞄准，
+ * 避免所有球反复抢同一块砖而漏掉翼尖凹角里的最后几块。
+ */
+export function collectRemainingBricks(grid: BrickGrid): TargetBrick[] {
+  const result: TargetBrick[] = [];
+  for (let row = 0; row < grid.rows; row += 1) {
+    for (let col = 0; col < grid.cols; col += 1) {
+      const cell = grid.at(col, row);
+      if (!cell || cell.role === 'EMPTY' || cell.role === 'STEEL') continue;
+      const center = brickCenter(grid, col, row);
+      if (!center) continue;
+      result.push({ col, row, x: center.x, y: center.y, hp: cell.hp });
+    }
+  }
+  result.sort((a, b) => {
+    const hpA = a.hp ?? 1;
+    const hpB = b.hp ?? 1;
+    if (hpA !== hpB) return hpA - hpB;
+    if (a.row !== b.row) return a.row - b.row;
+    return a.col - b.col;
+  });
+  return result;
+}
+
+/**
+ * 列出全部「从给定原点可直线命中」的剩余砖，按「血量少 → 距离近」排序。
+ *
+ * 与 {@link collectReachableTargets} 的区别：后者按夹角排序，供多球分区使用；
+ * 这里按清理优先级排序，供残局逐块清场使用。
+ */
+export function collectReachableBricks(
+  grid: BrickGrid,
+  originX: number,
+  originY: number,
+  maxAngleDeg = 68,
+): TargetBrick[] {
+  const remaining = collectRemainingBricks(grid);
+  const result: TargetBrick[] = [];
+  for (const brick of remaining) {
+    const angleDeg = (Math.atan2(brick.x - originX, originY - brick.y) * 180) / Math.PI;
+    if (Math.abs(angleDeg) > maxAngleDeg) continue;
+    if (!hasClearCorridor(grid, originX, originY, brick.x, brick.y, brick.col, brick.row)) continue;
+    result.push(brick);
+  }
+  result.sort((a, b) => {
+    const hpA = a.hp ?? 1;
+    const hpB = b.hp ?? 1;
+    if (hpA !== hpB) return hpA - hpB;
+    const distA = (a.x - originX) ** 2 + (a.y - originY) ** 2;
+    const distB = (b.x - originX) ** 2 + (b.y - originY) ** 2;
+    return distA - distB;
+  });
   return result;
 }
 

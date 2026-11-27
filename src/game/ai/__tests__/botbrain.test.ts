@@ -184,3 +184,62 @@ describe('BotBrain 落点预测与挡板决策', () => {
     assert.ok(x >= 16 && x <= 704);
   });
 });
+
+describe('BotBrain 多球接球决策', () => {
+  it('每球独立目标：按该球自己的目标反解出射角（而非统一 target）', () => {
+    // 一颗垂直下落的球，落点 contactX = 360。
+    const ball = ballAt(360, 900, 0, 400);
+    // 该球自己的目标在左上方 45°：desiredDeg = -45 → offset = -45/68。
+    const ownTarget = { col: 10, row: 5, x: 360 - 300, y: 500 };
+    const x = choosePaddleTarget({
+      balls: [ball],
+      paddleX: 360,
+      paddleTop: PADDLE_TOP,
+      halfWidth: 58,
+      followSpeed: PADDLE_FOLLOW_SPEED,
+      target: { col: 31, row: 5, x: 360 + 300, y: 500 }, // 统一目标朝右
+      targetsByBall: [ownTarget],
+      maxDeflectDeg: PADDLE_MAX_DEFLECT_DEG,
+      aimWeight: 1.5,
+    });
+    const expectedDeg =
+      (Math.atan2(ownTarget.x - 360, PADDLE_TOP - ownTarget.y) * 180) / Math.PI;
+    const expected = 360 - (expectedDeg / PADDLE_MAX_DEFLECT_DEG) * 58;
+    assert.ok(Math.abs(x - expected) < 1, `期望约 ${expected.toFixed(1)}，实际 ${x.toFixed(1)}`);
+  });
+
+  it('低空球兜底：瞄准权重很大时也不放弃马上要落地的球', () => {
+    // 紧急球：距挡板 0.1s 落地（落点 x=200）。
+    const urgent = ballAt(200, PADDLE_TOP - BALL_RADIUS - 0.1 * 400, 0, 400);
+    // 远球：2s 后落地（落点 x=560）。
+    const far = ballAt(560, PADDLE_TOP - BALL_RADIUS - 2 * 400, 0, 400);
+    const x = choosePaddleTarget({
+      balls: [urgent, far],
+      paddleX: 360,
+      paddleTop: PADDLE_TOP,
+      halfWidth: 58,
+      followSpeed: PADDLE_FOLLOW_SPEED,
+      target: { col: 36, row: 5, x: 560, y: 400 },
+      maxDeflectDeg: PADDLE_MAX_DEFLECT_DEG,
+      aimWeight: 10, // 极度偏向瞄准
+      urgencySec: 0.6,
+    });
+    assert.ok(
+      Math.abs(x - 200) <= 58,
+      `挡板必须覆盖低空球落点 200，实际 ${x.toFixed(1)}`,
+    );
+  });
+
+  it('无下落球时保持挡板原位', () => {
+    const x = choosePaddleTarget({
+      balls: [],
+      paddleX: 333,
+      paddleTop: PADDLE_TOP,
+      halfWidth: 58,
+      followSpeed: PADDLE_FOLLOW_SPEED,
+      target: null,
+      maxDeflectDeg: PADDLE_MAX_DEFLECT_DEG,
+    });
+    assert.equal(x, 333);
+  });
+});

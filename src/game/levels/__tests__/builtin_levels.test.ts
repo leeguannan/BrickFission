@@ -30,11 +30,11 @@ describe('builtinLevels 精选关卡库', () => {
     for (let i = 1; i < scores.length; i++) {
       assert.ok(scores[i]! >= scores[i - 1]!, `第 ${i + 1} 关分数回落`);
     }
-    // 1~3 新手 15~30
-    for (let i = 0; i < 3; i++) assert.ok(scores[i]! >= 15 && scores[i]! <= 30);
-    // 4~10 钻洞 35~55
-    for (let i = 3; i < 10; i++) assert.ok(scores[i]! >= 35 && scores[i]! <= 55);
-    // 11~20 高难 60~85
+    // 1~5 新手 15~30（纯图腾，无内部钢墙）
+    for (let i = 0; i < 5; i++) assert.ok(scores[i]! >= 15 && scores[i]! <= 30);
+    // 6~10 钻洞 35~55（图腾 + 带状钢墙迷宫）
+    for (let i = 5; i < 10; i++) assert.ok(scores[i]! >= 35 && scores[i]! <= 55);
+    // 11~20 高难 60~85（千砖迷宫 / 实心阵）
     for (let i = 10; i < 20; i++) assert.ok(scores[i]! >= 60 && scores[i]! <= 85);
   });
 

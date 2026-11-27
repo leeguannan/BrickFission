@@ -5,7 +5,7 @@
  *   - 100 球连续两次 TRIPLE_SPLIT，活跃球数严格 ≤ 200，不越界不异常；
  *   - 溢出的球数转化为全局伤害倍率（×2 / ×3，持续 8 秒）；
  *   - 蓝标 MULTI_LAUNCH 连发扇形 5 球并消耗库存；
- *   - 每击碎 150 块砖交替奖励 +1 蓝标 / +1 橙标。
+ *   - 每击碎 SKILL_CHARGE_EVERY_BRICKS 块砖交替奖励 +1 蓝标 / +1 橙标。
  */
 
 import assert from 'node:assert/strict';
@@ -19,6 +19,7 @@ import {
   OVERLOAD_DAMAGE_MULTIPLIER,
   OVERLOAD_DAMAGE_MULTIPLIER_HIGH,
   OVERLOAD_DURATION_SEC,
+  SKILL_CHARGE_EVERY_BRICKS,
   WALL_LEFT,
   WALL_RIGHT,
   WALL_TOP,
@@ -156,16 +157,16 @@ test('skill：蓝标连发一次发射 5 球并消耗 1 个蓝标，库存耗尽
   assert.equal(again.spawnedCount, 0);
 });
 
-test('skill：每击碎 150 块砖交替奖励 +1 蓝标 / +1 橙标', () => {
+test('skill：每击碎 SKILL_CHARGE_EVERY_BRICKS 块砖交替奖励 +1 蓝标 / +1 橙标', () => {
   const engine = buildEngine();
   assert.equal(engine.skillInventory.multiLaunchCount, 1);
   assert.equal(engine.skillInventory.tripleSplitCount, 2);
 
-  for (let i = 0; i < 150; i++) engine.onBrickDestroyed(0, 0);
+  for (let i = 0; i < SKILL_CHARGE_EVERY_BRICKS; i++) engine.onBrickDestroyed(0, 0);
   assert.equal(engine.skillInventory.multiLaunchCount, 2, '第 1 次充能应奖励蓝标');
   assert.equal(engine.skillInventory.tripleSplitCount, 2);
 
-  for (let i = 0; i < 150; i++) engine.onBrickDestroyed(0, 0);
+  for (let i = 0; i < SKILL_CHARGE_EVERY_BRICKS; i++) engine.onBrickDestroyed(0, 0);
   assert.equal(engine.skillInventory.tripleSplitCount, 3, '第 2 次充能应奖励橙标');
   assert.equal(engine.skillInventory.multiLaunchCount, 2);
 

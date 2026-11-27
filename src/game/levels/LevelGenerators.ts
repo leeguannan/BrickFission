@@ -6,7 +6,8 @@
  *   B. generateSymmetricTotem：极坐标 1/4 或 1/8 基础扇区决策 + 全象限镜像，
  *      STEEL 轮廓描边，强制底部中央 >=3 格引流通道直通中心空腔；
  *   C. generateExcavationMaze：矩形铺满 + Random Walk Carver 自底向上挖 1~2 条
- *      2~3 格宽曲折通道通盲盒空腔，按比例嵌 STEEL（通道与默认发球线受白名单保护）。
+ *      2~3 格宽曲折通道通盲盒空腔，嵌**成段连续钢墙隔断**
+ *      （'scatter' 旧版随机散点会在砖阵里留下 1 格宽钢壁口袋，小球挤进去后死循环）。
  *
  * 纯 TypeScript：图片像素读取与汉字字形栅格化属于宿主职责，在 src/studio 完成后
  * 以 BinaryGrid 形式喂入本模块；本文件不引用任何宿主环境 API。
@@ -309,16 +310,62 @@ export function generateSymmetricTotem(options: TotemOptions): LevelDefinition {
 }
 
 /**
- * 4 邻域贴空的 NORMAL 砖改为 STEEL（原地）。
+ * 标记「与网格外部连通」的 EMPTY 格（4 邻域 flood fill）。
  *
- * 底边开口规则：若该砖下方邻格为空（朝挡板战场的收口面），保留 NORMAL 不转 STEEL。
- * 否则圆盘外缘会被描成闭合钢壳、内环又封死中心空腔，BFS 沿引流通道进入空腔后无法
- * 穿透钢壳，壳内全部 NORMAL 会被 sanitizeUnreachable 判死区清空（图腾被掏空）。
- * 底边改用可破坏砖收口后，球可从下方打通进入内部，死区与内容保留同时成立。
+ * 用于区分图腾的**外部空间**（轮廓之外 + 下方战场）与**内部空洞**
+ * （被图腾砖包围的随机空隙）。内部空洞是球可以进去的通道，
+ * 不能被描边转成钢墙。
+ */
+function markOutsideEmpty(cells: readonly BrickCell[], cols: number, rows: number): Uint8Array {
+  const outside = new Uint8Array(cols * rows);
+  const queue: number[] = [];
+  const push = (idx: number): void => {
+    if (outside[idx] === 1) return;
+    if (cells[idx]!.role !== 'EMPTY') return;
+    outside[idx] = 1;
+    queue.push(idx);
+  };
+  for (let c = 0; c < cols; c++) {
+    push(c);
+    push((rows - 1) * cols + c);
+  }
+  for (let r = 0; r < rows; r++) {
+    push(r * cols);
+    push(r * cols + cols - 1);
+  }
+  let head = 0;
+  while (head < queue.length) {
+    const idx = queue[head++]!;
+    const col = idx % cols;
+    const row = (idx / cols) | 0;
+    if (col > 0) push(idx - 1);
+    if (col < cols - 1) push(idx + 1);
+    if (row > 0) push(idx - cols);
+    if (row < rows - 1) push(idx + cols);
+  }
+  return outside;
+}
+
+/**
+ * 轮廓描边：与**外部空间**相邻的普通砖改为 STEEL（原地）。
+ *
+ * 两条关键约束：
+ *
+ * 1. **只描外部轮廓**：图腾内部有随机空洞（旧实现会把紧邻空洞的砖也转成
+ *    STEEL，于是内部多出一堆**打不破的孤立钢刺**）——它们把内部通道彻底堵死，
+ *    并制造 1 格宽竖井（实测第 07 关有 4 处，机器人卡在 61% 破砖率）。
+ *    判据改为「邻居是否是外部连通空间」，内部空洞保持为可通行通道。
+ *
+ * 2. **底边开口**：若该砖下方邻格为空（朝挡板战场的收口面），保留 NORMAL
+ *    不转 STEEL。否则圆盘外缘会被描成闭合钢壳、内环又封死中心空腔，
+ *    BFS 沿引流通道进入空腔后无法穿透钢壳，壳内全部 NORMAL 会被
+ *    sanitizeUnreachable 判死区清空（图腾被掏空）。
  */
 function applySteelOutline(cells: BrickCell[], cols: number, rows: number): void {
   const snapshot = cells.slice();
   const steel = makeSteelCell(7);
+  const outside = markOutsideEmpty(snapshot, cols, rows);
+  const offsets = [-1, 1, -cols, cols] as const;
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       const idx = r * cols + c;
@@ -327,14 +374,18 @@ function applySteelOutline(cells: BrickCell[], cols: number, rows: number): void
       const below = r < rows - 1 ? snapshot[idx + cols] : null;
       // 朝战场的底边收口面保留为可破坏砖，杜绝闭合钢壳。
       if (below?.role === 'EMPTY') continue;
-      const neighbors = [
-        c > 0 ? snapshot[idx - 1] : null,
-        c < cols - 1 ? snapshot[idx + 1] : null,
-        r > 0 ? snapshot[idx - cols] : null,
-      ];
-      if (neighbors.some((n) => n?.role === 'EMPTY')) {
-        cells[idx] = steel;
+      let touchesOutside = false;
+      for (let k = 0; k < offsets.length; k++) {
+        const nIdx = idx + offsets[k]!;
+        if (nIdx < 0 || nIdx >= snapshot.length) continue;
+        const neighbor = snapshot[nIdx]!;
+        if (neighbor.role !== 'EMPTY') continue;
+        if (outside[nIdx] === 1) {
+          touchesOutside = true;
+          break;
+        }
       }
+      if (touchesOutside) cells[idx] = steel;
     }
   }
 }
@@ -457,6 +508,16 @@ export interface MazeOptions {
   channelWidth?: 2 | 3;
   /** 壁垒嵌 STEEL 比例（0~1），默认 0.18。 */
   steelRatio?: number;
+  /**
+   * 钢墙布局：
+   *   - 'bands'（默认）：少数成段连续钢墙隔断，带间净距 ≥3 格；
+   *   - 'scatter'：旧版随机散点撒 STEEL（会在砖阵里留下 1 格宽钢壁口袋）。
+   */
+  steelLayout?: 'bands' | 'scatter';
+  /** 'bands' 布局下的钢墙隔断条数，默认 4。 */
+  steelBandCount?: number;
+  /** 'bands' 布局下两条钢墙带之间的最小列距（格），默认 4（净距 ≥3 格）。 */
+  steelBandMinGap?: number;
   /** 盲盒空腔半径（格），默认 3。 */
   cavityRadius?: number;
   /** 普通砖最大血量，默认 2。 */
@@ -474,6 +535,9 @@ export function generateExcavationMaze(options: MazeOptions): LevelDefinition {
   const channelCount = options.channelCount === 2 ? 2 : 1;
   const channelWidth = options.channelWidth === 2 ? 2 : 3;
   const steelRatio = clamp01(options.steelRatio ?? 0.18);
+  const steelLayout = options.steelLayout === 'scatter' ? 'scatter' : 'bands';
+  const steelBandCount = clampInt(options.steelBandCount ?? 4, 0, 12);
+  const steelBandMinGap = Math.max(3, Math.round(options.steelBandMinGap ?? 4));
   const cavityRadius = clampInt(options.cavityRadius ?? 3, 2, 6);
   const maxHp = clampInt(options.maxHp ?? 2, 1, 3);
 
@@ -529,14 +593,33 @@ export function generateExcavationMaze(options: MazeOptions): LevelDefinition {
     }
   }
 
-  // 5. 按比例嵌 STEEL（只改非保护、非空、非空腔连通格）。
+  // 5. 嵌 STEEL。
+  //    - 'bands'（默认）：少数成段连续钢墙隔断。随机散点会在砖阵里留下
+  //      「1 格宽」的钢壁口袋（两块 STEEL 之间夹一格空隙），小球（直径 13px）
+  //      挤进去后只能垂直弹跳，形成死循环；成段隔断不会产生这种缝。
+  //    - 'scatter'：旧版随机散点，保留用于对照实验。
   const steel = makeSteelCell(7);
-  for (let r = fillTop; r <= fillBottom; r++) {
-    for (let c = fillLeft; c <= fillRight; c++) {
-      const idx = r * cols + c;
-      if (protected_[idx] === 1) continue;
-      if (cells[idx]!.role !== 'NORMAL') continue;
-      if (rng() < steelRatio) cells[idx] = steel;
+  if (steelLayout === 'bands') {
+    applySteelBands(
+      cells,
+      protected_,
+      cols,
+      rng,
+      steelBandCount,
+      steelBandMinGap,
+      fillTop,
+      fillBottom,
+      fillLeft,
+      fillRight,
+    );
+  } else {
+    for (let r = fillTop; r <= fillBottom; r++) {
+      for (let c = fillLeft; c <= fillRight; c++) {
+        const idx = r * cols + c;
+        if (protected_[idx] === 1) continue;
+        if (cells[idx]!.role !== 'NORMAL') continue;
+        if (rng() < steelRatio) cells[idx] = steel;
+      }
     }
   }
 
@@ -554,6 +637,71 @@ export function generateExcavationMaze(options: MazeOptions): LevelDefinition {
     rows,
     mechanics: DEFAULT_MECHANICS,
   });
+}
+
+/**
+ * 成段连续钢墙隔断（'bands' 布局）。
+ *
+ * 背景：旧版按 `steelRatio` 随机撒 STEEL，会在砖阵里制造「1 格宽」的钢壁口袋 ——
+ * 两块相邻 STEEL 之间夹一格空隙，小球（直径 13px）挤进去后只能垂直弹跳，
+ * 出不来也打不到旁边的砖，实测第 19/20 关破砖率因此卡在 10%~67%。
+ *
+ * 这里改成「少数成段连续钢墙隔断」：
+ *   - 每条带是 1 格宽的连续竖直段（带宽 = 1 格，不产生空腔，只产生墙）；
+ *   - 带与带的列距 ≥ `minGap`（默认 4 → 净距 ≥3 格），保证通道不会缩窄成 1 格；
+ *   - 通道 / 盲盒空腔 / 默认发球线（protected_ 白名单）一律不落钢墙；
+ *   - 各带的高度与起始行随机错开，避免形成整齐栅栏把砖阵切成互不连通的碎片。
+ */
+function applySteelBands(
+  cells: BrickCell[],
+  protected_: Uint8Array,
+  cols: number,
+  rng: () => number,
+  bandCount: number,
+  minGap: number,
+  fillTop: number,
+  fillBottom: number,
+  fillLeft: number,
+  fillRight: number,
+): void {
+  if (bandCount <= 0) return;
+  const steel = makeSteelCell(7);
+
+  // 可用作钢墙带的列：整段都不与受保护格（通道/空腔/发球线）相交。
+  const candidateCols: number[] = [];
+  for (let c = fillLeft; c <= fillRight; c++) {
+    let blocked = false;
+    for (let r = fillTop; r <= fillBottom; r++) {
+      if (protected_[r * cols + c] === 1) {
+        blocked = true;
+        break;
+      }
+    }
+    if (!blocked) candidateCols.push(c);
+  }
+  if (candidateCols.length === 0) return;
+
+  const placed: number[] = [];
+  const attempts = Math.max(12, bandCount * 16);
+  for (let i = 0; i < attempts && placed.length < bandCount; i++) {
+    const col = candidateCols[Math.floor(rng() * candidateCols.length)]!;
+    if (placed.some((p) => Math.abs(p - col) < minGap)) continue;
+    placed.push(col);
+  }
+  placed.sort((a, b) => a - b);
+
+  for (const col of placed) {
+    const span = fillBottom - fillTop + 1;
+    const bandHeight = clampInt(6 + Math.floor(rng() * 9), 4, Math.max(4, span - 2));
+    const maxStart = Math.max(fillTop, fillBottom - bandHeight + 1);
+    const start = fillTop + Math.floor(rng() * (maxStart - fillTop + 1));
+    for (let r = start; r < Math.min(fillBottom + 1, start + bandHeight); r++) {
+      const idx = r * cols + col;
+      if (protected_[idx] === 1) continue;
+      if (cells[idx]!.role !== 'NORMAL') continue;
+      cells[idx] = steel;
+    }
+  }
 }
 
 /** 以 (col,row) 为中心挖 channelWidth 格宽的横条，标记白名单并清空。 */

@@ -93,7 +93,11 @@ export interface ScorerOptions {
  * BFS 语义（docs/03 §3.1）：
  *   - 起点为底边所有非 STEEL 格（挡板所在开放区）；
  *   - EMPTY 与 NORMAL 均可通行（NORMAL 视为可被一路打通，不阻断）；
- *   - 仅 STEEL 阻断；对角移动时若两个正交邻格同为 STEEL 则禁止斜穿（防止墙角鬼影渗透）；
+ *   - 仅 STEEL 阻断；
+ *   - **严格 4 邻域正交连通**：只允许上下左右移动，禁止对角斜穿。
+ *     斜穿会把「对角两块 STEEL 夹出的 1 格缝」误判成通路，
+ *     而小球直径 13px、格宽 16px，实测会卡在这种缝里垂直弹跳死循环；
+ *     改成正交连通后，生成器的死区净化会把这类缝后面的砖正确判为不可达。
  *   - 返回 visited：1=从挡板开放区可达，0=死区。
  */
 export function computeReachable(cells: readonly BrickCell[], cols: number, rows: number): Uint8Array {
@@ -115,24 +119,22 @@ export function computeReachable(cells: readonly BrickCell[], cols: number, rows
     const idx = queue[head++]!;
     const col = idx % cols;
     const row = (idx / cols) | 0;
-    for (let dr = -1; dr <= 1; dr++) {
-      for (let dc = -1; dc <= 1; dc++) {
-        if (dr === 0 && dc === 0) continue;
-        const nc = col + dc;
-        const nr = row + dr;
-        if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
-        const nIdx = nr * cols + nc;
-        if (visited[nIdx]) continue;
-        if (cells[nIdx]!.role === 'STEEL') continue;
-        // 对角移动：两个正交邻格同为 STEEL 时禁止斜穿。
-        if (dr !== 0 && dc !== 0) {
-          const orthA = cells[row * cols + nc]!;
-          const orthB = cells[nr * cols + col]!;
-          if (orthA.role === 'STEEL' && orthB.role === 'STEEL') continue;
-        }
-        visited[nIdx] = 1;
-        queue.push(nIdx);
-      }
+    // 严格 4 邻域：只走上下左右。
+    const offsets = [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+    ] as const;
+    for (const [dc, dr] of offsets) {
+      const nc = col + dc;
+      const nr = row + dr;
+      if (nc < 0 || nc >= cols || nr < 0 || nr >= rows) continue;
+      const nIdx = nr * cols + nc;
+      if (visited[nIdx]) continue;
+      if (cells[nIdx]!.role === 'STEEL') continue;
+      visited[nIdx] = 1;
+      queue.push(nIdx);
     }
   }
   return visited;

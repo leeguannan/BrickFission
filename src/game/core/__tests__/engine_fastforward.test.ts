@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { FIXED_DT, WALL_TOP } from '../constants.js';
+import { ENDGAME_HOMING_DEG, ENDGAME_IDLE_SEC, FIXED_DT, WALL_TOP } from '../constants.js';
 import { GameEngine } from '../GameEngine.js';
 import { makeNormalCell } from '../BrickGrid.js';
 import { levelWith } from './testkit.js';
@@ -109,8 +109,8 @@ test('fastforward：×3 快进不会放大单步位移（按固定步长推进�
   assert.ok(travelled <= speed * FIXED_DT * 3 + 1e-6, `位移不应超过 3 个固定步长，实际 ${travelled}`);
 });
 
-test('endgame：连续 6 秒无砖受击且剩余 ≤ 12 块时激活软追踪', () => {
-  // 仅剩 1 块砖，且位置远离球的运动区域，保证 6 秒内不会击中砖块。
+test('endgame：连续 ENDGAME_IDLE_SEC 秒无砖受击且剩余 ≤ 12 块时激活软追踪', () => {
+  // 仅剩 1 块砖，且位置远离球的运动区域，保证阈值时间内不会击中砖块。
   const level = levelWith([[38, 2, makeNormalCell(1, 0)]], 'endgame-level');
   const engine = new GameEngine({ level, rng: () => 0.5 });
 
@@ -118,14 +118,15 @@ test('endgame：连续 6 秒无砖受击且剩余 ≤ 12 块时激活软追踪',
   for (let i = 0; i < 30; i++) engine.update(FIXED_DT); // 让挡板移动到位
   engine.releaseBall();
 
-  // 5.9 秒：尚未达到 6 秒空闲阈值。
-  for (let i = 0; i < 354; i++) engine.update(FIXED_DT);
-  assert.equal(engine.isEndgameAssistActive, false, '未满 6 秒不应激活残局辅助');
+  // 空闲阈值前 0.1 秒：尚未达到 ENDGAME_IDLE_SEC 空闲阈值。
+  const idleFrames = Math.round((ENDGAME_IDLE_SEC - 0.1) / FIXED_DT);
+  for (let i = 0; i < idleFrames; i++) engine.update(FIXED_DT);
+  assert.equal(engine.isEndgameAssistActive, false, '未满空闲阈值不应激活残局辅助');
   assert.equal(engine.remainingBreakable, 1);
 
-  // 继续推进到 6 秒之后。
+  // 继续推进到空闲阈值之后。
   for (let i = 0; i < 60; i++) engine.update(FIXED_DT);
-  assert.equal(engine.isEndgameAssistActive, true, '满 6 秒无砖受击应激活残局辅助');
+  assert.equal(engine.isEndgameAssistActive, true, '满空闲阈值无砖受击应激活残局辅助');
   assert.deepEqual(engine.endgameTarget, { col: 38, row: 2 });
 
   const events = engine.drainEvents();
@@ -134,7 +135,7 @@ test('endgame：连续 6 秒无砖受击且剩余 ≤ 12 块时激活软追踪',
   assert.equal(assist.type === 'ENDGAME_ASSIST' ? assist.targetCol : -1, 38);
 });
 
-test('endgame：软追踪偏转不超过 12°，且方向指向目标砖', () => {
+test('endgame：软追踪偏转不超过 ENDGAME_HOMING_DEG，且方向指向目标砖', () => {
   const level = levelWith([[38, 2, makeNormalCell(1, 0)]], 'endgame-homing');
   const engine = new GameEngine({ level, rng: () => 0.5 });
 
@@ -173,8 +174,8 @@ test('endgame：软追踪偏转不超过 12°，且方向指向目标砖', () =>
     const actual = headingDeg(after.vx, after.vy);
     const deviation = wrapDeg(actual - pure);
     assert.ok(
-      Math.abs(deviation) <= 12 + 1e-6,
-      `软追踪偏转应 ≤ 12°，实际 ${deviation}`,
+      Math.abs(deviation) <= ENDGAME_HOMING_DEG + 1e-6,
+      `软追踪偏转应 ≤ ${ENDGAME_HOMING_DEG}°，实际 ${deviation}`,
     );
 
     // 软追踪应让球更靠近目标砖方向。
