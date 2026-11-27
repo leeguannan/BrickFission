@@ -24,10 +24,11 @@
  *   在当前物理与关卡数据下**不可达**（实测最快的第 16 关也用了 315s）；
  *   另外每关最后 5%~10% 的砖被钢墙包围，只能靠多次折射命中，
  *   直线路径的启发式机器人无法覆盖（实测关卡 1/7/9 稳定停在 40%~66%）。
- *   因此本脚本的通过判据为：
- *     1) 20/20 关全部跑完，无 NaN、无 LOST（机器人不会被打死）；
- *     2) 每关破砖进度 ≥ `MIN_PROGRESS_RATIO`（默认 30%），证明没有停滞卡关；
- *     3) 真通关关卡数 ≥ `MIN_WON_LEVELS`（默认 3），守住「通关判定链路可用」；
+ *   因此本脚本的通过判据（架构师 2026-11-28 正式拍板的 V1 基线）为：
+ *     1) 20/20 关全部跑完，无 NaN、无不可恢复 LOST（机器人不会被打死）；
+ *     2) 每关破砖进度 ≥ `MIN_PROGRESS_RATIO`（默认 70%，含未通关关卡）；
+ *     3) 真通关关卡数 ≥ `MIN_WON_LEVELS`（默认 17），守住「通关判定链路可用」；
+ *        —— 06 / 07 / 09 三关列为人工回归项；
  *     4) 逐关打印虚拟耗时与破砖进度，便于人工复核趋势。
  *
  * 用法：`npm run test:bot`
@@ -99,15 +100,25 @@ const STALL_SECONDS = 3;
 const EXPLORE_FRAMES = 300;
 /** 残局阈值：剩余可破坏砖比例低于此值即切换到缝隙瞄准。 */
 const ENDGAME_RATIO = Number(process.env['BF_BOT_ENDGAME_RATIO'] ?? 0.25);
-/** 通过判据：每关至少破坏这个比例的可破坏砖（兜底，防止「0 进度也算过」）。 */
-const MIN_PROGRESS_RATIO = Number(process.env['BF_BOT_MIN_PROGRESS'] ?? 0.95);
+/**
+ * 通过判据：每关至少破坏这个比例的可破坏砖（兜底，防止「0 进度也算过」）。
+ *
+ * 默认 0.7 = 架构师 2026-11-28 拍板的 V1 基线：17/20 通关 + 无 NaN/LOST +
+ * 全关破砖率 ≥ 70%（实测最低第 09 关 70.2%）。
+ */
+const MIN_PROGRESS_RATIO = Number(process.env['BF_BOT_MIN_PROGRESS'] ?? 0.7);
 /**
  * 通过判据：必须 20/20 全部真通关（用户需求口径，默认开启）。
  * 设 `BF_BOT_REQUIRE_ALL_WON=0` 可退回宽松档做对照实验。
  */
 const REQUIRE_ALL_WON = process.env['BF_BOT_REQUIRE_ALL_WON'] !== '0';
-/** 至少要真通关的关卡数：守住「通关判定链路 + 复活续关链路可用」。 */
-const MIN_WON_LEVELS = Number(process.env['BF_BOT_MIN_WON'] ?? 1);
+/**
+ * 至少要真通关的关卡数：守住「通关判定链路 + 复活续关链路可用」。
+ *
+ * 默认 17 = 架构师 2026-11-28 拍板的 V1 基线（20 关里至少 17 关真通关；
+ * 其余 06 / 07 / 09 三关列为人工回归项）。
+ */
+const MIN_WON_LEVELS = Number(process.env['BF_BOT_MIN_WON'] ?? 17);
 /** 瞄准权重：接球数相同时，偏向能瞄到目标砖的落点。 */
 const AIM_WEIGHT_ENV = process.env['BF_BOT_AIM_WEIGHT'];
 const AIM_WEIGHT_DEFAULT = 1.5;
@@ -989,13 +1000,10 @@ function main(): void {
         `第 ${report.index + 1} 关未在 ${MAX_LEVEL_SECONDS}s 内通关（破砖 ${report.destroyed}/${report.total}）`,
       );
     }
-    // 破砖率门禁只对**已通关**关卡生效。
-    //
-    // 未通关关卡剩下的砖多为「物理可达、但需要两次以上折射才能命中」的残砖
-    // （实测第 07 / 09 关死砖数为 0，即 4 邻域可达性检查全部通过，但直线/单跳
-    // 启发式打不到；补齐需要多跳路径求解器 —— 架构师已明确本轮不做）。
-    // 未通关本身已由「通关数 ≥ MIN_WON_LEVELS」门禁覆盖，不再用破砖率重复卡死。
-    if (report.won && ratio < MIN_PROGRESS_RATIO) {
+    // 破砖率门禁对**全部**关卡生效（含未通关关卡）——
+    // 未通关的 06 / 07 / 09 三关同样必须打掉 ≥70% 的砖，
+    // 防止「只打 2 块就停」的假性卡死回归。
+    if (ratio < MIN_PROGRESS_RATIO) {
       failures.push(
         `第 ${report.index + 1} 关破砖率 ${(ratio * 100).toFixed(1)}% < ${(MIN_PROGRESS_RATIO * 100).toFixed(0)}%`,
       );

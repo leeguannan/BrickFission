@@ -58,11 +58,7 @@ jobs:
       - name: 性能压测（200 球上限）
         run: npm run bench
 
-      - name: 20 关 AI 通关回归（宽松档：CI 绿灯口径）
-        run: npm run test:bot:ci
-
-      - name: 20 关 AI 通关回归（严格档：仅记录结果，不阻断流水线）
-        continue-on-error: true
+      - name: 20 关 AI 通关回归（V1 拍板基线：17/20 通关 + 无 NaN/LOST + 全关破砖率 ≥70%）
         run: npm run test:bot
 
       - name: 安装 Chromium
