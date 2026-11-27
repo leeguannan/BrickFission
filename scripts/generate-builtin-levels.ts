@@ -32,7 +32,7 @@ const candidates: Candidate[] = [];
 //   900s 只打掉 67 块），关掉后图腾边缘砖直接暴露，命中率高得多。
 for (const symmetry of [4, 8] as const) {
   for (const ringCount of [5, 7]) {
-    for (let seed = 1; seed <= 12; seed++) {
+    for (let seed = 1; seed <= 24; seed++) {
       candidates.push({
         key: `totem s${symmetry} r${ringCount} seed${seed}`,
         group: 'outline-totem',

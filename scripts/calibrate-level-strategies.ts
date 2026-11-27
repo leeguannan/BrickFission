@@ -185,6 +185,13 @@ async function main(): Promise<void> {
           for (const aim of aims) targets.push({ level, strategy, ratio: knownRatio, group, aim });
         }
       }
+    } else if (groups.length > 1 && RATIOS.length > 1) {
+      // 扫「残局阈值 × 球群规模」：固定该关现有策略。
+      for (const ratio of RATIOS) {
+        for (const group of groups) {
+          targets.push({ level, strategy: knownStrategy, ratio, group, aim: 0 });
+        }
+      }
     } else if (groups.length > 1 || aims.length > 1) {
       // 扫「球群规模 × 瞄准权重」：固定该关现有策略与残局阈值。
       for (const group of groups) {

@@ -240,40 +240,34 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
         "symbol": "A",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#41b06e"
+        "color": "#2f6fed"
       },
       "H": {
         "symbol": "H",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#2f6fed"
+        "color": "#ef1d1d"
       },
       "I": {
         "symbol": "I",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#b06ab3"
+        "color": "#4ecdc4"
       },
       "J": {
         "symbol": "J",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#ff7b54"
+        "color": "#b06ab3"
       },
       "N": {
         "symbol": "N",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#ef1d1d"
-      },
-      "Q": {
-        "symbol": "Q",
-        "role": "NORMAL",
-        "hp": 2,
-        "color": "#4ecdc4"
+        "color": "#ff7b54"
       }
     },
-    "rleGrid": "42.|42.|16.O8.O16.|16.2O6.2O16.|16.2YA4.A2Y16.|11.2Y3.2YA4.A2Y3.2Y11.|10.3Y16.3Y10.|9.3Y2H.O10.O.2H3Y9.|11.3HRO10.OR3H11.|12.H3R.I6.I.3RH12.|12.O2R3.I4.I3.2RO12.|7.2O3.2O3.CJ4.JC3.2O3.2O7.|7.2O2Y2.I2.2DC4.C2D2.I2.2Y2O7.|9.AY3.IJCDP4.PDCJI3.YA9.|8.2A5.D2JP4.P2JD5.2A8.|10.3R2.2J2R4.2R2J2.3R10.|10.2R3.2N2Q4.2Q2N3.2R10.|10.3R2.2JRJ4.JR2J2.3R10.|8.3A4.DJ.P4.P.JD4.3A8.|9.AY3.IJCDP4.PDCJI3.YA9.|7.2O2Y2.I2.2DC4.C2D2.I2.2Y2O7.|7.2O3.2O3.CJ4.JC3.2O3.2O7.|12.O2R12.2RO12.|12.H3R.I6.I.3RH12.|11.3HRO10.OR3H11.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
+    "rleGrid": "42.|42.|17.2Y4.2Y17.|18.Y4.Y18.|42.|11.2D.R12.R.2D11.|10.3D2R2.AH4.HA2.2R3D10.|9.3D2IR2.2A4.2A2.R2I3D9.|11.3I4.J4.J4.3I11.|10.2RI4.IJ4.JI4.I2R10.|11.R3.P2.I4.I2.P3.R11.|15.2P8.2P15.|13.I2.2R6.2R2.I13.|6.3Y2.2AJI2.RN4.NR2.IJ2A2.3Y6.|6.2Y2.3HAJ2.IN4.NI2.JA3H2.2Y6.|6.2J6.A2.2O4.2O2.A6.2J6.|6.2J26.2J6.|6.2J5.2A2.OI4.IO2.2A5.2J6.|6.2Y3.2H2J2.PN4.NP2.2J2H3.2Y6.|6.3Y2.2AJI2.RN4.NR2.IJ2A2.3Y6.|13.I2.2R6.2R2.I13.|14.3P8.3P14.|11.R3.P2.J4.J2.P3.R11.|10.2RI4.IJ4.JI4.I2R10.|11.3I4.J4.J4.3I11.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
     "mechanics": {
       "initialSkills": {
         "multiLaunch": 3,
@@ -283,9 +277,9 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
     "difficultyScore": {
       "totalScore": 15,
       "tier": "EASY",
-      "breakableCount": 242,
+      "breakableCount": 208,
       "steelOcclusionRatio": 0,
-      "simBreakRate20s": 0.6487603305785123,
+      "simBreakRate20s": 0.7704326923076923,
       "hasDeadZoneWarning": false
     }
   },
@@ -390,22 +384,28 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
         "symbol": "A",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#2f6fed"
+        "color": "#b06ab3"
       },
       "H": {
         "symbol": "H",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#ef1d1d"
+        "color": "#41b06e"
       },
       "I": {
         "symbol": "I",
         "role": "NORMAL",
         "hp": 2,
         "color": "#4ecdc4"
+      },
+      "J": {
+        "symbol": "J",
+        "role": "NORMAL",
+        "hp": 2,
+        "color": "#ff7b54"
       }
     },
-    "rleGrid": "42.|42.|16.A8.A16.|14.2H2A6.2A2H14.|14.2H2A6.2A2H14.|15.H2YI4.I2YH15.|14.Y2AYI4.IY2AY14.|14.2YA2Y4.2YA2Y14.|15.YARD4.DRAY15.|8.H2.Y5.RD4.DR5.Y2.H8.|7.4H2Y5.R4.R5.2Y4H7.|7.2AH2A2Y4.O4.O4.2Y2AH2A7.|7.3AY2AR4.R4.R4.R2AY3A7.|9.I3YD3R8.3RD3YI9.|9.3I2YD.2O6.2O.D2Y3I9.|9.3B2.Y2P8.2PY2.3B9.|9.3B3.3B6.3B3.3B9.|9.3B.2Y2P.B4.B.2P2Y.3B9.|9.3IY2D.OR6.RO.2DY3I9.|9.I3YD3R8.3RD3YI9.|7.3AY2AR4.R4.R4.R2AY3A7.|7.2AH2A2Y4.O4.O4.2Y2AH2A7.|7.4H2Y5.D4.D5.2Y4H7.|8.H2.Y5.RD4.DR5.Y2.H8.|15.YARD4.DRAY15.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
+    "rleGrid": "42.|42.|16.3D4.3D16.|14.5D4.5D14.|14.2D2.P4.P2.2D14.|14.A3.P4.P3.A14.|13.2A3.H4.H3.2A13.|12.3AH10.H3A12.|11.2OA2H2.I4.I2.2HA2O11.|10.3OD2HO2I4.2IO2HD3O10.|11.O3D3OI4.I3O3DO11.|12.2D2POPO4.OPO2P2D12.|11.2J.2P.2P4.2P.2P.2J11.|11.2J2.G2.O4.O2.G2.2J11.|10.3CI.2G.R4.R.2G.I3C10.|10.3C2I2D8.2D2I3C10.|10.2C3I2D2Y4.2Y2D3I2C10.|10.3C2I2D8.2D2I3C10.|11.2C2.2G2R4.2R2G2.2C11.|11.2J2.G2.O4.O2.G2.2J11.|11.2J.2P.2P4.2P.2P.2J11.|12.2D2POPO4.OPO2P2D12.|11.O3D3OI4.I3O3DO11.|10.3OD2HO2I4.2IO2HD3O10.|11.2OA2H2.I4.I2.2HA2O11.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
     "mechanics": {
       "initialSkills": {
         "multiLaunch": 3,
@@ -415,9 +415,9 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
     "difficultyScore": {
       "totalScore": 16,
       "tier": "EASY",
-      "breakableCount": 274,
+      "breakableCount": 272,
       "steelOcclusionRatio": 0,
-      "simBreakRate20s": 0.5424270072992701,
+      "simBreakRate20s": 0.46001838235294124,
       "hasDeadZoneWarning": false
     }
   },
@@ -522,34 +522,28 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
         "symbol": "A",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#ef1d1d"
+        "color": "#b06ab3"
       },
       "H": {
         "symbol": "H",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#2f6fed"
+        "color": "#41b06e"
       },
       "I": {
         "symbol": "I",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#41b06e"
+        "color": "#4ecdc4"
       },
       "J": {
         "symbol": "J",
         "role": "NORMAL",
         "hp": 2,
         "color": "#ff7b54"
-      },
-      "N": {
-        "symbol": "N",
-        "role": "NORMAL",
-        "hp": 2,
-        "color": "#b06ab3"
       }
     },
-    "rleGrid": "42.|42.|16.P2A4.2AP16.|14.2H2PA4.A2P2H14.|12.2Y2H2PA4.A2P2H2Y12.|13.2YH2O6.2OH2Y13.|13.Y.2IO6.O2I.Y13.|13.C2.I2O4.2OI2.C13.|8.3Y.3C.I8.I.3C.3Y8.|8.H2Y.3CPB8.BP3C.2YH8.|7.4H2.C2P2B6.2B2PC2.4H7.|7.2PH2I2.B2P2B4.2B2PB2.2IH2P7.|7.3PO2I.2BPYP4.PYP2B.2IO3P7.|6.3A.3O3.P2Y4.2YP3.3O.3A6.|6.3A6.D2BY4.Y2BD6.3A6.|6.3J3.2N.2ODH4.HD2O.2N3.3J6.|6.3J3.3N4G4.4G3N3.3J6.|6.3J3.N2.2OD6.D2O2.N3.3J6.|6.3A6.DBPY4.YPBD6.3A6.|6.3A.3O3.P2Y4.2YP3.3O.3A6.|7.3PO2I.2BPYP4.PYP2B.2IO3P7.|7.2PH2I2.3P2B4.2B3P2.2IH2P7.|7.4H2.C2P2B6.2B2PC2.4H7.|8.H2Y.3CPB8.BP3C.2YH8.|8.3Y.3C.I8.I.3C.3Y8.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
+    "rleGrid": "42.|42.|16.A8.A16.|16.2A6.2A16.|12.2Y2.2A6.2A2.2Y12.|13.2Y12.2Y13.|13.2Y2G8.2G2Y13.|13.G2YG8.G2YG13.|8.3Y.3GYG2H4.2HGY3G.3Y8.|9.3Y3GAI2H4.2HIA3G3Y9.|11.2YG2A2IH4.H2I2AG2Y11.|7.2A.2G2YI2AIC4.CI2AI2Y2G.2A7.|7.3A.2GH2IADO4.ODA2IH2G.3A7.|13.3HO2D4.2DO3H13.|14.HG2CD4.D2CGH14.|6.3R3B3.2JGB4.BG2J3.3B3R6.|6.3R3B3.3DI4.I3D3.3B3R6.|6.3R3B3.2JG6.G2J3.3B3R6.|13.2HGCOD4.DOCG2H13.|13.3HO2D4.2DO3H13.|7.3A.2GH2IADO4.ODA2IH2G.3A7.|7.2A.2G2Y3AIC4.CI3A2Y2G.2A7.|11.2YG2A2IH4.H2I2AG2Y11.|9.3Y3GAI2H4.2HIA3G3Y9.|8.3Y.3GYG2H4.2HGY3G.3Y8.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
     "mechanics": {
       "initialSkills": {
         "multiLaunch": 3,
@@ -559,9 +553,9 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
     "difficultyScore": {
       "totalScore": 17,
       "tier": "EASY",
-      "breakableCount": 352,
+      "breakableCount": 338,
       "steelOcclusionRatio": 0,
-      "simBreakRate20s": 0.3277698863636364,
+      "simBreakRate20s": 0.4571005917159763,
       "hasDeadZoneWarning": false
     }
   },
@@ -822,7 +816,7 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
         "symbol": "I",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#2f6fed"
+        "color": "#4ecdc4"
       },
       "J": {
         "symbol": "J",
@@ -834,10 +828,10 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
         "symbol": "N",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#4ecdc4"
+        "color": "#2f6fed"
       }
     },
-    "rleGrid": "42.|42.|17.AS4.SA17.|14.2S2.S4.S2.2S14.|12.2SHS2.S4.S2.SH2S12.|11.SI2AS2.S4.S2.S2AIS11.|10.S2IS.RS.G4.G.SR.S2IS10.|9.S3IS2.S8.S2.S3IS9.|8.S2AI2RS.S.S4.S.S.S2RI2AS8.|8.S2A.3R.S.P4.P.S.3R.2AS8.|7.4H2.R2.JS6.SJ2.R2.4H7.|9.H2R2.S2.JN4.NJ2.S2.2RH9.|11.2R.2J2.I4.I2.2J.2R11.|6.4S3.S2.S8.S2.S3.4S6.|6.S2AG2S2JPONS6.SNOP2J2SG2AS6.|6.S2C3D2.3JO6.O3J2.3D2CS6.|6.S2C3D6.S4.S6.3D2CS6.|6.S2C3D.4JOH4.HO4J.3D2CS6.|6.S2A3GJ2PONI6.INO2PJ3G2AS6.|6.3AG3.P2.I8.I2.P3.G3A6.|11.SR.2J2.S4.S2.2J.RS11.|9.2SR5.SN4.NS5.R2S9.|7.HSHS2.S2.SJP4.PJS2.S2.SHSH7.|8.SAS.SRS.S.S4.S.S.SRS.SAS8.|8.3AI3R.R.P4.P.R.3RI3A8.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
+    "rleGrid": "42.|42.|16.3S4.3S16.|16.SDS4.SDS16.|12.2S2.3D4.3D2.2S12.|11.SAPS12.SPAS11.|10.S2APH2S8.2SHP2AS10.|9.S3AI2HS8.S2HI3AS9.|8.3PA3IHS.S4.S.SH3IA3P8.|9.2PH3I.S.D4.D.S.3IH2P9.|11.RHI2.GS6.SG2.IHR11.|7.2S.2O2HG2.GP4.PG2.G2H2O.2S7.|7.S2D.2O.2G.JO4.OJ.2G.2O.2DS7.|6.S2D4.D2.O2J4.2JO2.D4.2DS6.|6.3D3.2ODO2PJ4.J2POD2O3.3D6.|9.S2H2NO2.OI4.IO2.O2N2HS9.|9.S2H3N3P6.3P3N2HS9.|9.3HN2O2.OG4.GO2.2ON3H9.|6.3S3.O2DOPOJ4.JOPO2DO3.3S6.|6.3D4.D2.O2J4.2JO2.D4.3D6.|7.R2D.2O.2G.JO4.OJ.2G.2O.2DR7.|7.2D.2O2H3.GP4.PG3.2H2O.2D7.|11.RHI2.2GD4.D2G2.IHR11.|9.2SH3I.R.R4.R.R.3IH2S9.|8.3PA3IHO.D4.D.OH3IA3P8.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
     "mechanics": {
       "initialSkills": {
         "multiLaunch": 3,
@@ -845,11 +839,11 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
       }
     },
     "difficultyScore": {
-      "totalScore": 36,
+      "totalScore": 37,
       "tier": "MEDIUM",
-      "breakableCount": 218,
+      "breakableCount": 284,
       "steelOcclusionRatio": 1,
-      "simBreakRate20s": 0.2310779816513762,
+      "simBreakRate20s": 0.22359154929577466,
       "hasDeadZoneWarning": false
     }
   },
@@ -954,34 +948,28 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
         "symbol": "A",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#2f6fed"
+        "color": "#b06ab3"
       },
       "H": {
         "symbol": "H",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#41b06e"
+        "color": "#4ecdc4"
       },
       "I": {
         "symbol": "I",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#b06ab3"
+        "color": "#2f6fed"
       },
       "J": {
         "symbol": "J",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#ff7b54"
-      },
-      "N": {
-        "symbol": "N",
-        "role": "NORMAL",
-        "hp": 2,
         "color": "#ef1d1d"
       }
     },
-    "rleGrid": "42.|42.|42.|42.|12.GS2.3S4.3S2.SG12.|13.2S.2RA4.A2R.2S13.|13.2S2.SH4.HS2.2S13.|12.SIDS.2J4.2J.SDIS12.|8.G3S2I.R2.S4.S2.R.2I3SG8.|9.G2DI3.S.J4.J.S3.I2DG9.|11.DR3.AS6.SA3.RD11.|12.2RA2.PN4.NP2.A2R12.|9.2S3.2A2OP4.P2O2A3.2S9.|9.SR2SJ.NPOB4.BOPN.J2SRS9.|8.SA3H.J.2NB4.B2N.J.3HAS8.|8.SB3G4.2P4.2P4.3GBS8.|8.SB2G3.4R4.4R3.2GBS8.|8.SB3G4.PN4.NP4.3GBS8.|8.3A2H2J.N.B4.B.N.2J2H3A8.|9.SR3J.NPOB4.BOPN.3JRS9.|9.2R3.2A2OS4.S2O2A3.2R9.|12.SR3.2S4.2S3.RS12.|11.2S3.SAS4.SAS3.2S11.|9.2SDS3.A.S4.S.A3.SD2S9.|8.3G3I.R2.J4.J2.R.3I3G8.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
+    "rleGrid": "42.|42.|17.YS4.SY17.|18.S4.S18.|12.2S4.Y4.Y4.2S12.|11.S3A12.3AS11.|11.3A14.3A11.|12.R16.R12.|12.R4.2S4.2S4.R12.|8.S2.SDS.RS2R4.2R2S.RDS2.S8.|7.SH2S3DS3IR4.R3IS3D2SHS7.|7.S4H2D2J2I6.2I2J2D4HS7.|7.S5HR3J8.3JR5HS7.|6.S2AI3H3R10.3R3HI2AS6.|6.S2A3I2.R3H6.3HR2.3I2AS6.|6.S2A3I3.2IH6.H2I3.3I2AS6.|6.S2A3I3.3I6.3I3.3I2AS6.|6.S2A3I3.2IH6.H2I3.3I2AS6.|6.S2A3I.2R2H8.2H2R.3I2AS6.|6.3AI3H3R10.3R3HI3A6.|7.R5HR3J8.3JR5HR7.|7.R4H2D2J2I6.2I2J2D4HR7.|7.4H3DJ3IR4.R3IJ3D4H7.|8.H2.3D.2I2R4.2R2I.3D2.H8.|12.D4.2R4.2R4.D12.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
     "mechanics": {
       "initialSkills": {
         "multiLaunch": 3,
@@ -989,11 +977,11 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
       }
     },
     "difficultyScore": {
-      "totalScore": 38,
+      "totalScore": 40,
       "tier": "MEDIUM",
-      "breakableCount": 198,
+      "breakableCount": 292,
       "steelOcclusionRatio": 1,
-      "simBreakRate20s": 0.2152777777777778,
+      "simBreakRate20s": 0.22089041095890413,
       "hasDeadZoneWarning": false
     }
   },
@@ -1098,22 +1086,40 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
         "symbol": "A",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#2f6fed"
+        "color": "#b06ab3"
       },
       "H": {
         "symbol": "H",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#ef1d1d"
+        "color": "#2f6fed"
       },
       "I": {
         "symbol": "I",
         "role": "NORMAL",
         "hp": 2,
+        "color": "#ef1d1d"
+      },
+      "J": {
+        "symbol": "J",
+        "role": "NORMAL",
+        "hp": 2,
+        "color": "#41b06e"
+      },
+      "N": {
+        "symbol": "N",
+        "role": "NORMAL",
+        "hp": 2,
         "color": "#4ecdc4"
+      },
+      "Q": {
+        "symbol": "Q",
+        "role": "NORMAL",
+        "hp": 2,
+        "color": "#ff7b54"
       }
     },
-    "rleGrid": "42.|42.|16.S8.S16.|14.2SAS6.SA2S14.|14.2AHS6.SH2A14.|15.SHS6.SHS15.|10.S4.SHIS4.SIHS4.S10.|9.SYS3.S3I4.3IS3.SYS9.|8.S2YAS.SY2I6.2IYS.SA2YS8.|8.SY3AS3Y8.3YS3AYS8.|7.S2R.A3D3Y6.3Y3DA.2RS7.|7.2S3.2D2BYO6.OY2B2D3.2S7.|7.2R4.S2BP2O4.2OP2BS4.2R7.|13.SRB2P6.2PBRS13.|10.3SDR2BAH4.HA2BRD3S10.|10.S4D2.2A4.2A2.4DS10.|10.S4D2.2H4.2H2.4DS10.|10.5D2.2A4.2A2.5D10.|11.2D2R2B2H4.2H2B2R2D11.|13.SRB2P6.2PBRS13.|7.2S4.S2BP2O4.2OP2BS4.2S7.|7.2S3.SD2BYS6.SY2BDS3.2S7.|7.2RS.S3D3Y6.3Y3DS.S2R7.|8.SYS2AD2YS8.S2YD2ASYS8.|8.3Y2A.2Y2I6.2I2Y.2A3Y8.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
+    "rleGrid": "42.|42.|17.RS4.SR17.|18.S4.S18.|12.YS2.2SD4.D2S2.SY12.|13.3S2AD4.D2A3S13.|13.SR2H.I4.I.2HRS13.|12.SGRIJ8.JIRGS12.|8.Y3S2GOI2J6.2JIO2G3SY8.|9.Y2RG3O.P6.P.3OG2RY9.|10.2RI2O3.P4.P3.2OI2R10.|9.S2H2I3.JH4.HJ3.2I2HS9.|9.SA2JP2.2NJ4.J2N2.P2JAS9.|6.3SDA3.PHJNB4.BNJHP3.AD3S6.|6.SR2D3IC.CHNB4.BNHC.C3I2DRS6.|6.SY2.3GRC2.2Q4.2Q2.CR3G2.YS6.|6.SY2.2G3R2.2R4.2R2.3R2G2.YS6.|6.SY2.3G2C2.QN4.NQ2.2C3G2.YS6.|6.SR3D2I2.CHRB4.BRHC2.2I3DRS6.|6.3RDA3.PHJNB4.BNJHP3.AD3R6.|9.RA2JS2.2NJ4.J2N2.S2JAR9.|9.3HIS3.JH4.HJ3.SI3H9.|10.2RIOS12.SOI2R10.|9.S2RG2OS.S6.S.S2OG2RS9.|8.3Y3GOI2J6.2JIO3G3Y8.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
     "mechanics": {
       "initialSkills": {
         "multiLaunch": 3,
@@ -1121,11 +1127,11 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
       }
     },
     "difficultyScore": {
-      "totalScore": 45,
+      "totalScore": 44,
       "tier": "MEDIUM",
-      "breakableCount": 238,
+      "breakableCount": 284,
       "steelOcclusionRatio": 1,
-      "simBreakRate20s": 0.18697478991596636,
+      "simBreakRate20s": 0.19102112676056338,
       "hasDeadZoneWarning": false
     }
   },
@@ -1236,22 +1242,28 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
         "symbol": "H",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#4ecdc4"
+        "color": "#41b06e"
       },
       "I": {
         "symbol": "I",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#2f6fed"
+        "color": "#4ecdc4"
       },
       "J": {
         "symbol": "J",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#ef1d1d"
+        "color": "#2f6fed"
+      },
+      "N": {
+        "symbol": "N",
+        "role": "NORMAL",
+        "hp": 2,
+        "color": "#ff7b54"
       }
     },
-    "rleGrid": "42.|42.|17.YS4.SY17.|18.S4.S18.|12.2S4.Y4.Y4.2S12.|11.S3A12.3AS11.|11.3A14.3A11.|12.S16.S12.|12.S4.2S4.2S4.S12.|8.S2.SDS.2S2R4.2R2S.SDS2.S8.|7.SH2S3DS3IR4.R3IS3D2SHS7.|7.S4H2D2J2I6.2I2J2D4HS7.|7.S5HR3J8.3JR5HS7.|6.S2AI3H3R10.3R3HI2AS6.|6.S2A3I2.R3H6.3HR2.3I2AS6.|6.S2A3I3.2IH6.H2I3.3I2AS6.|6.S2A3I3.3I6.3I3.3I2AS6.|6.S2A3I3.2IH6.H2I3.3I2AS6.|6.S2A3I.2R2H8.2H2R.3I2AS6.|6.3AI3H3R10.3R3HI3A6.|7.S5HR3J8.3JR5HS7.|7.S4H2D2J2I6.2I2J2D4HS7.|7.4H3DJ3IR4.R3IJ3D4H7.|8.H2.3D.2I2R4.2R2I.3D2.H8.|12.D4.2R4.2R4.D12.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
+    "rleGrid": "42.|42.|16.3S4.3S16.|14.2S3D4.3D2S14.|14.5D4.5D14.|15.R2YP4.P2YR15.|10.S4.3YP4.P3Y4.S10.|9.SAS4.R2Y4.2YR4.SAS9.|8.S3AS3.RHR4.RHR3.S3AS8.|8.S2A2HS.RIHR4.RHIS.R2H2AS8.|7.S3O3HS3IR4.R3IS3H3OS7.|7.S2O2D2H2J2IO4.O2I2J2H2D2OS7.|7.S2O3D.3J2G4.2G3J.3D2OS7.|6.S3P3D3.2OG4.G2O3.3D3PS6.|6.S5P2N.3OR4.R3O.2N5PS6.|6.S5P3N2COI4.IO2C3N5PS6.|6.S5P3N2CR6.R2C3N5PS6.|6.S5P3N2COS4.SO2C3N5PS6.|6.S5PN2.3OS4.S3O2.N5PS6.|6.4P3D3.2OG4.G2O3.3D4P6.|7.R2O3D.3J2G4.2G3J.3D2OR7.|7.R2O2D2H2J2IO4.O2I2J2H2D2OR7.|7.4O3HJ3IR4.R3IJ3H4O7.|8.R2A3H.2IHR4.RH2I.3H2AR8.|8.4AH3.Y2H4.2HY3.H4A8.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
     "mechanics": {
       "initialSkills": {
         "multiLaunch": 3,
@@ -1259,11 +1271,11 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
       }
     },
     "difficultyScore": {
-      "totalScore": 47,
+      "totalScore": 46,
       "tier": "MEDIUM",
-      "breakableCount": 282,
+      "breakableCount": 382,
       "steelOcclusionRatio": 1,
-      "simBreakRate20s": 0.1875,
+      "simBreakRate20s": 0.19175392670157068,
       "hasDeadZoneWarning": false
     }
   },
@@ -1374,7 +1386,7 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
         "symbol": "H",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#41b06e"
+        "color": "#2f6fed"
       },
       "I": {
         "symbol": "I",
@@ -1386,16 +1398,22 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
         "symbol": "J",
         "role": "NORMAL",
         "hp": 2,
-        "color": "#2f6fed"
+        "color": "#41b06e"
       },
       "N": {
         "symbol": "N",
         "role": "NORMAL",
         "hp": 2,
         "color": "#4ecdc4"
+      },
+      "Q": {
+        "symbol": "Q",
+        "role": "NORMAL",
+        "hp": 2,
+        "color": "#ff7b54"
       }
     },
-    "rleGrid": "42.|42.|16.S8.S16.|14.2SAS6.SA2S14.|12.2S2CAS6.SA2C2S12.|11.SG2AC2PS4.S2PC2AGS11.|10.S2GA.2CPA4.AP2C.A2GS10.|9.S3G3.C2P4.2PC3.3GS9.|8.S2AG4.CH6.HC4.G2AS8.|8.S2A4.HIH6.HIH4.2AS8.|7.S3C3.2H2IH4.H2I2H3.3CS7.|7.SA3C2.I2HIJ4.JI2HI2.3CAS7.|7.3AP2CH2IHCJ4.JCH2IH2CP3A7.|9.S3P.2HJ2C4.2CJ2H.3PS9.|9.S2A2C.R2JC4.C2JR.2C2AS9.|6.3S3N2.C2.R6.R2.C2.3N3S6.|6.S2A3N3.3Y6.3Y3.3N2AS6.|6.3A3N.2C2.RI4.IR2.2C.3N3A6.|9.S2AC2.R2JC4.C2JR2.C2AS9.|9.S3P.2HJ2C4.2CJ2H.3PS9.|7.2SAP2CH2IHCJ4.JCH2IH2CPA2S7.|7.SA3C2.S2HIJ4.JI2HS2.3CAS7.|7.3CS3.2HIS6.SI2H3.S3C7.|8.SAS4.HIS6.SIH4.SAS8.|8.3AG4.CH6.HC4.G3A8.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
+    "rleGrid": "42.|42.|17.RS4.SR17.|18.S4.S18.|12.2S4.S4.S4.2S12.|11.S2YS3.Y4.Y3.S2YS11.|10.S2YAS12.SA2YS10.|9.S2D3AS10.S3A2DS9.|8.3D2HARS10.SRA2H3D8.|9.D3HG2RS8.S2RG3HD9.|10.RH3G2IS6.S2I3GHR10.|9.S2J2G2.ICS4.SCI2.2G2JS9.|9.SJ2.P3.2C4.2C3.P2.JS9.|6.3SHJ2.2PC2.N4.N2.C2P2.JH3S6.|6.SJ2H3QRP2CBN4.NB2CPR3Q2HJS6.|6.SJ2H3Q4R2B4.2B4R3Q2HJS6.|6.SJ2H2Q5R2C4.2C5R2Q2HJS6.|6.SJ2H3Q4R2B4.2B4R3Q2HJS6.|6.SJ3H2Q2P2C2N4.2N2C2P2Q3HJS6.|6.3JHJ2.2PC2.N4.N2.C2P2.JH3J6.|9.RJ2.P3.2C4.2C3.P2.JR9.|9.3J2G2.ICR4.RCI2.2G3J9.|10.RH3G3I6.3I3GHR10.|9.S3HG2RI8.I2RG3HS9.|8.3D2HA2R10.2RA2H3D8.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.|42.",
     "mechanics": {
       "initialSkills": {
         "multiLaunch": 3,
@@ -1403,11 +1421,11 @@ export const BUILTIN_LEVEL_DATA: readonly LevelDefinition[] = [
       }
     },
     "difficultyScore": {
-      "totalScore": 51,
+      "totalScore": 53,
       "tier": "MEDIUM",
-      "breakableCount": 298,
+      "breakableCount": 308,
       "steelOcclusionRatio": 1,
-      "simBreakRate20s": 0.1669463087248322,
+      "simBreakRate20s": 0.15665584415584416,
       "hasDeadZoneWarning": false
     }
   },

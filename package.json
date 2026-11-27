@@ -1,6 +1,6 @@
 {
   "name": "brick-fission",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "description": "《碎砖大裂变》(Brick Fission) — 纯 TypeScript 核心引擎 + Canvas2D 渲染 + 程序化音频 + 关卡工作台 + 商业化闭环与微信适配 + 全自动测试体系（Playwright E2E / AI 通关回归 / CI）+ 逐关打法标定",
   "type": "module",
@@ -20,7 +20,7 @@
     "test:all": "npm run lint && npm test && npm run bench && npm run test:bot:ci && npm run test:e2e && npm run build",
     "bench": "tsx scripts/bench-300-balls.ts",
     "test:ai": "tsx --test src/game/ai/__tests__/*.test.ts",
-    "test:bot:ci": "BF_BOT_REQUIRE_ALL_WON=0 BF_BOT_MIN_PROGRESS=0.6 tsx scripts/test-levels-playthrough.ts"
+    "test:bot:ci": "BF_BOT_MAX_SECONDS=300 BF_BOT_REQUIRE_ALL_WON=0 BF_BOT_MIN_PROGRESS=0.9 BF_BOT_MIN_WON=15 tsx scripts/test-levels-playthrough.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",

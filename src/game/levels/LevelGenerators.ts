@@ -298,6 +298,11 @@ export function generateSymmetricTotem(options: TotemOptions): LevelDefinition {
   // 死角开凿：随机 STEEL 可能围出四面封闭的空格（球进去即卡死），
   // 把相邻钢墙改成普通砖打开缺口，总砖量不减。
   openSealedPockets(cells, cols, rows);
+  // 死砖开凿（仅图腾关）：描边钢墙会把翼尖处的普通砖挡在砖阵内侧，
+  // 球永远打不到（实测第 06 / 08 关各有 30~40 块死砖）→ 打通竖直通路。
+  openThreeSidedPockets(cells, cols, rows);
+  openBlockedBricks(cells, cols, rows);
+  openThreeSidedPockets(cells, cols, rows);
 
   return definitionFromCells({
     id: options.id,
@@ -385,9 +390,49 @@ function applySteelOutline(cells: BrickCell[], cols: number, rows: number): void
           break;
         }
       }
-      if (touchesOutside) cells[idx] = steel;
+      if (!touchesOutside) continue;
+      // 三面钢墙口袋保护：若某个空格的**唯一**非钢墙邻居就是本砖，
+      // 本砖正是那个空格的逃生口 —— 转成钢墙会把它封成死袋（实测第 06 关
+      // 描边后钢墙 110 块 vs 普通砖 218 块，且产生大量倒 U 口袋）。
+      // 此时保留为可破坏砖。
+      if (isLastOpeningOfPocket(snapshot, cols, idx)) continue;
+      cells[idx] = steel;
     }
   }
+}
+
+/**
+ * 判断 `idx` 是否是某个空格的**唯一**非钢墙邻居（即该空格的逃生口）。
+ *
+ * 典型场景：图腾内部某个空格的左 / 右 / 上都是钢墙，只有下方这一格是普通砖；
+ * 若把这一格描成钢墙，空格就变成三面（甚至四面）钢墙的死袋，
+ * 球弹进去后再也出不来。
+ */
+function isLastOpeningOfPocket(
+  cells: readonly BrickCell[],
+  cols: number,
+  idx: number,
+): boolean {
+  const offsets = [-1, 1, -cols, cols] as const;
+  const col = idx % cols;
+  const row = (idx / cols) | 0;
+  for (let k = 0; k < offsets.length; k++) {
+    const nIdx = idx + offsets[k]!;
+    if (nIdx < 0 || nIdx >= cells.length) continue;
+    // 邻居必须是空格子才可能是口袋。
+    if (cells[nIdx]!.role !== 'EMPTY') continue;
+    let openCount = 0;
+    for (let j = 0; j < offsets.length; j++) {
+      const mIdx = nIdx + offsets[j]!;
+      if (mIdx < 0 || mIdx >= cells.length) continue;
+      if (cells[mIdx]!.role !== 'STEEL') openCount += 1;
+    }
+    // 该空格只有 idx 这一个非钢墙邻居 → idx 是它最后的逃生口。
+    if (openCount === 1) return true;
+  }
+  void col;
+  void row;
+  return false;
 }
 
 /**
@@ -488,6 +533,115 @@ export function openSealedPockets(cells: BrickCell[], cols: number, rows: number
       }
     }
     if (!changed) break;
+  }
+  return opened;
+}
+
+/**
+ * 死砖开凿：把**打不到的可破坏砖**从钢墙里挖出来。
+ *
+ * 图腾描边会在外缘留下一圈 STEEL，翼尖处的普通砖因此被钢墙挡在
+ * 「砖阵内侧」—— 球从下方过来先撞钢墙，那块砖永远打不到
+ * （实测第 06 / 08 关各有 30~40 块这样的死砖，破砖率卡在 82%~88%）。
+ *
+ * 判据：某块普通砖的正下方是 STEEL，且这块 STEEL 的左右都不是 STEEL
+ * （成段的钢墙隔断不属于描边，不动它）→ 把这块 STEEL 改成普通砖，
+ * 给翼尖砖开一条竖直通路。
+ *
+ * 钢墙 → 普通砖，**总砖量不减**（可破坏砖变多），而原本打不到的砖
+ * 变得可打，破砖率随之提升。
+ */
+function openBlockedBricks(cells: BrickCell[], cols: number, rows: number): number {
+  const isSteel = (c: number, r: number): boolean =>
+    c < 0 || r < 0 || c >= cols || r >= rows || cells[r * cols + c]!.role === 'STEEL';
+
+  let opened = 0;
+  for (let r = 1; r < rows - 2; r += 1) {
+    for (let c = 1; c < cols - 1; c += 1) {
+      const idx = r * cols + c;
+      if (cells[idx]!.role !== 'NORMAL') continue;
+      // 正下方是钢墙 → 这块砖被挡住（球自下方来，先撞墙）。
+      if (!isSteel(c, r + 1)) continue;
+      // 成段钢墙（左右也是钢墙）属于刻意布局，不开凿。
+      if (isSteel(c - 1, r + 1) || isSteel(c + 1, r + 1)) continue;
+      cells[(r + 1) * cols + c] = makeNormalCell(1, 0);
+      opened += 1;
+    }
+  }
+  return opened;
+}
+
+/**
+ * U 形（三面钢墙）口袋开凿。
+ *
+ * 四面钢墙死角由上面的循环处理，但还有一类「倒 U 口袋」：
+ * 某个空格的左 / 右 / 上是钢墙、只有下方开口 —— 球从下方弹进去后
+ * 被三面钢墙围住，只能原路退出，机器人与玩家都拿它没办法
+ * （实测第 06~10 关描边后大量出现）。
+ *
+ * 修法：把开口方向**两侧**的某一格钢墙改成普通砖，给凹槽开一个侧向出口；
+ * 优先开凿内部钢墙（外侧不是外部连通空地），不动刻意设置的外轮廓。
+ * 总砖量不减（钢墙 → 可破坏砖）。
+ */
+function openThreeSidedPockets(cells: BrickCell[], cols: number, rows: number): number {
+  const outside = markOutsideEmpty(cells, cols, rows);
+  const offsets = [
+    { dc: -1, dr: 0 },
+    { dc: 1, dr: 0 },
+    { dc: 0, dr: -1 },
+    { dc: 0, dr: 1 },
+  ] as const;
+
+  const isSteel = (c: number, r: number): boolean =>
+    c < 0 || r < 0 || c >= cols || r >= rows || cells[r * cols + c]!.role === 'STEEL';
+
+  let opened = 0;
+  for (let r = 1; r < rows - 1; r += 1) {
+    for (let c = 1; c < cols - 1; c += 1) {
+      const idx = r * cols + c;
+      if (cells[idx]!.role !== 'EMPTY') continue;
+
+      // 统计 4 邻域的钢墙数与开口方向。
+      let steelCount = 0;
+      let openDir = -1;
+      for (let k = 0; k < offsets.length; k += 1) {
+        const dir = offsets[k]!;
+        if (isSteel(c + dir.dc, r + dir.dr)) steelCount += 1;
+        else openDir = k;
+      }
+      if (steelCount !== 3 || openDir < 0) continue;
+
+      // 开口方向的左右两侧：开凿其中「更靠内部」的一侧。
+      const sideDirs = [openDir - 1, openDir + 1].map((k) => (k + 4) % 4);
+      // 优先开凿内部钢墙（外侧不是外部连通空地），外轮廓砖最后才动。
+      let best: { c: number; r: number } | null = null;
+      let fallback: { c: number; r: number } | null = null;
+      for (const k of sideDirs) {
+        const dir = offsets[k]!;
+        const sc = c + dir.dc;
+        const sr = r + dir.dr;
+        if (!isSteel(sc, sr)) continue;
+        const outerC = sc - dir.dc;
+        const outerR = sr - dir.dr;
+        const isOutline =
+          outerC >= 0 &&
+          outerC < cols &&
+          outerR >= 0 &&
+          outerR < rows &&
+          outside[outerR * cols + outerC] === 1;
+        if (isOutline) {
+          // 外轮廓砖：留作最后手段（宁可轮廓有缺口，也不要死袋）。
+          if (!fallback) fallback = { c: sc, r: sr };
+          continue;
+        }
+        best = { c: sc, r: sr };
+        break;
+      }
+      if (!best) best = fallback;
+      if (!best) continue;
+      cells[best.r * cols + best.c] = makeNormalCell(1, 0);
+      opened += 1;
+    }
   }
   return opened;
 }

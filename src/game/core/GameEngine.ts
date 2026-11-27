@@ -34,6 +34,8 @@ import {
   REVIVE_BALL_COUNT,
   REVIVE_FAN_ANGLES,
   SKILL_REFILL_COUNT,
+  SOFT_HOMING_STEEL_PROBE,
+  SOFT_HOMING_TANGENT_FACTOR,
   WALL_LEFT,
   WALL_RIGHT,
 } from './constants.js';
@@ -452,7 +454,13 @@ export class GameEngine implements PhysicsWorld {
   }
 
   /**
-   * 软追踪：球每次撞墙 / 撞挡板后，速度方向向"最近剩余可碎砖"微调 ≤ 12°。
+   * 软追踪：球每次撞墙 / 撞挡板后，速度方向向"最近剩余可碎砖"微调 ≤ ENDGAME_HOMING_DEG 度。
+   *
+   * 防吸墙：若目标方向上紧邻着就是 STEEL 钢墙，硬偏转只会让球贴着钢墙反复回弹
+   * （实测残局里球在钢墙与砖阵之间来回弹，破砖率归零）。
+   * 因此偏转前先沿目标方向探测钢墙：
+   *   - 目标方向被挡 → 改沿切向微幅脱困（切向同样不能指向钢墙）；
+   *   - 两侧切向都被挡 → 本次不偏转，保持当前航向。
    */
   private applySoftHoming(ball: Ball): void {
     const speed = Math.hypot(ball.vx, ball.vy);
@@ -469,7 +477,32 @@ export class GameEngine implements PhysicsWorld {
     const heading = Math.atan2(ball.vx, -ball.vy);
     const desired = Math.atan2(targetX - ball.x, -(targetY - ball.y));
     const maxDelta = (ENDGAME_HOMING_DEG * Math.PI) / 180;
-    const delta = clamp(wrapAngle(desired - heading), -maxDelta, maxDelta);
+
+    // 目标方向单位向量（与 heading 约定一致：0 = 垂直向上）。
+    let dirX = Math.sin(desired);
+    let dirY = -Math.cos(desired);
+
+    if (this.isSteelAhead(ball.x, ball.y, dirX, dirY, SOFT_HOMING_STEEL_PROBE)) {
+      // 目标方向紧邻钢墙 → 尝试沿切向脱困。
+      const tangent = maxDelta * SOFT_HOMING_TANGENT_FACTOR;
+      const left = rotateVector(dirX, dirY, tangent);
+      const right = rotateVector(dirX, dirY, -tangent);
+      const leftClear = !this.isSteelAhead(ball.x, ball.y, left[0], left[1], SOFT_HOMING_STEEL_PROBE);
+      const rightClear = !this.isSteelAhead(ball.x, ball.y, right[0], right[1], SOFT_HOMING_STEEL_PROBE);
+      if (leftClear) {
+        dirX = left[0];
+        dirY = left[1];
+      } else if (rightClear) {
+        dirX = right[0];
+        dirY = right[1];
+      } else {
+        // 两侧都是钢墙：本次不偏转，避免把球塞进钢墙缝隙里来回弹。
+        return;
+      }
+    }
+
+    const aimed = Math.atan2(dirX, -dirY);
+    const delta = clamp(wrapAngle(aimed - heading), -maxDelta, maxDelta);
     if (delta === 0) return;
 
     const cos = Math.cos(delta);
@@ -478,6 +511,28 @@ export class GameEngine implements PhysicsWorld {
     const vy = ball.vx * sin + ball.vy * cos;
     ball.vx = vx;
     ball.vy = vy;
+  }
+
+  /**
+   * 沿方向探测前方是否有 STEEL 钢墙。
+   *
+   * 探测区间从球心 + 球半径开始（跳过球自身占据的空间），
+   * 避免「球正贴着墙」时被自身所在格误判为前方有墙。
+   */
+  private isSteelAhead(x: number, y: number, dirX: number, dirY: number, distance: number): boolean {
+    const start = BALL_RADIUS;
+    const end = BALL_RADIUS + distance;
+    const step = 2;
+    for (let d = start; d <= end; d += step) {
+      const px = x + dirX * d;
+      const py = y + dirY * d;
+      const col = this.grid.colAt(px);
+      const row = this.grid.rowAt(py);
+      if (!this.grid.contains(col, row)) continue;
+      const cell = this.grid.at(col, row);
+      if (cell && cell.role === 'STEEL') return true;
+    }
+    return false;
   }
 
   /* ---------------------------------------------------------------- */
@@ -567,6 +622,17 @@ function wrapAngle(angle: number): number {
   while (a > Math.PI) a -= Math.PI * 2;
   while (a <= -Math.PI) a += Math.PI * 2;
   return a;
+}
+
+/**
+ * 二维向量旋转（弧度）。
+ *
+ * 残局软追踪用它在目标方向被钢墙挡住时求切向脱困方向。
+ */
+function rotateVector(x: number, y: number, angle: number): [number, number] {
+  const cos = Math.cos(angle);
+  const sin = Math.sin(angle);
+  return [x * cos - y * sin, x * sin + y * cos];
 }
 
 /**
