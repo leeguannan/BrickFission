@@ -227,6 +227,7 @@ const defaultRewardedVideoPresenter: RewardedVideoPresenter = (placement) =>
     const card = document.createElement('div');
     card.className = 'bf-reward-card';
     const title = document.createElement('h3');
+    title.className = 'bf-reward-title';
     title.textContent = '模拟激励广告';
     const body = document.createElement('p');
     body.textContent = REWARD_COPY[placement];

@@ -22,11 +22,23 @@ export class WebAudioEngine implements IAudioEngine {
   private sfx: ProceduralSFX | null = null;
   private bgm: AdaptiveBGM | null = null;
 
+  /**
+   * AudioContext 工厂注入位。
+   *
+   * 微信小游戏端可传入 `() => wx.createWebAudioContext()`，
+   * 避免依赖浏览器全局 `AudioContext`；未注入时回退到浏览器全局构造器。
+   */
+  private readonly contextFactory: (() => AudioContext) | null;
+
   private muted = false;
   private paused = false;
   private background = false;
   private lastActiveBalls = 0;
   private lastSpeed: 1 | 2 | 3 = 1;
+
+  constructor(options?: { contextFactory?: () => AudioContext }) {
+    this.contextFactory = options?.contextFactory ?? null;
+  }
 
   /** WebAudio 是否可用（不可用时本引擎等价于 NullAudioEngine）。 */
   get isAvailable(): boolean {
@@ -44,10 +56,9 @@ export class WebAudioEngine implements IAudioEngine {
       }
       return;
     }
-    const Ctor = this.resolveAudioContextCtor();
-    if (!Ctor) return; // 环境不支持 → 安全降级
+    const ctx = this.createAudioContext();
+    if (!ctx) return; // 环境不支持 → 安全降级
     try {
-      const ctx = new Ctor();
       const limiter = new AudioLimiter(ctx);
       this.ctx = ctx;
       this.limiter = limiter;
@@ -151,6 +162,28 @@ export class WebAudioEngine implements IAudioEngine {
       } catch {
         /* 已关闭则忽略 */
       }
+    }
+  }
+
+  /**
+   * 创建 AudioContext：优先使用注入的工厂（微信端 `wx.createWebAudioContext`），
+   * 否则回退到浏览器全局构造器；两者都不可用时返回 null（安全降级）。
+   */
+  private createAudioContext(): AudioContext | null {
+    if (this.contextFactory) {
+      try {
+        const injected = this.contextFactory();
+        if (injected) return injected;
+      } catch {
+        /* 注入工厂失败则回退到全局构造器 */
+      }
+    }
+    const Ctor = this.resolveAudioContextCtor();
+    if (!Ctor) return null;
+    try {
+      return new Ctor();
+    } catch {
+      return null;
     }
   }
 

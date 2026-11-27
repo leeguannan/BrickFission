@@ -374,11 +374,28 @@ body {
   margin-bottom: 10px;
 }
 
-.bf-reward-count {
+.bf-reward-countdown {
+  display: block;
+  margin: 6px 0 16px;
   font-size: 40px;
   font-weight: 800;
   color: #7ca2ff;
   font-variant-numeric: tabular-nums;
+}
+
+.bf-reward-skip {
+  appearance: none;
+  border: 1px solid var(--hud-border);
+  border-radius: 10px;
+  padding: 8px 18px;
+  background: rgba(124, 162, 255, 0.12);
+  color: #cfe0ff;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.bf-reward-skip:hover {
+  background: rgba(124, 162, 255, 0.22);
 }
 
 /* ------------------------------------------------------------------ */

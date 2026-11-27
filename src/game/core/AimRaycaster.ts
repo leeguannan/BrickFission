@@ -2,8 +2,9 @@
  * 《碎砖大裂变》(Brick Fission) — 瞄准线预测器
  *
  * 实现 `docs/01_CORE_ENGINE_AND_PHYSICS_SPEC.md` §4：
- *   - `READY_AIM` 阶段从发球点发射虚拟射线（步长 4px，最长 900px）；
- *   - 复刻 `PhysicsEngine` 的墙体与网格命中判定；
+ *   - `READY_AIM` 阶段从发球点发射虚拟射线（最长 900px）；
+ *   - 复刻 `PhysicsEngine` 的墙体与网格命中判定（圆 vs AABB 精确检测 +
+ *     最小分离轴法线），保证"预测轨迹 = 实际弹道"；
  *   - 记录第 1 段路径与第 1 个碰撞点，按法线反射延伸约 140px 的第 2 段折线预览；
  *   - 输出等距采样点数组（间距 22px）交由渲染层绘制。
  *
@@ -13,12 +14,13 @@
 import {
   AIM_ANGLE_MAX_DEG,
   AIM_ANGLE_MIN_DEG,
+  AIM_DETECT_STEP,
   AIM_DOT_FADE,
   AIM_DOT_SPACING,
   AIM_MAX_LENGTH,
   AIM_SECOND_SEGMENT_LENGTH,
-  AIM_STEP,
   BALL_RADIUS,
+  CONTACT_EPSILON,
   WALL_LEFT,
   WALL_RIGHT,
   WALL_TOP,
@@ -29,6 +31,12 @@ import type { AimDot, AimPrediction } from './types.js';
 /** 射线命中信息。 */
 interface RayHit {
   hit: boolean;
+  /**
+   * 命中后的球心位置（已沿分离法线推出到 `radius + CONTACT_EPSILON`）。
+   *
+   * 该语义保证第二段射线从命中点出发时不会在原点立刻再次碰撞，
+   * 从而折线预览不会"凭空消失"。
+   */
   x: number;
   y: number;
   /** 单位法线（由障碍指向射线入射侧）。 */
@@ -38,9 +46,20 @@ interface RayHit {
   brick: boolean;
 }
 
+/** 砖块候选（预分配槽位，运行期零分配）。 */
+interface BrickCandidate {
+  col: number;
+  row: number;
+  nx: number;
+  ny: number;
+  depth: number;
+  frontality: number;
+}
+
 export class AimRaycaster {
   private readonly grid: BrickGrid;
-  private readonly step: number;
+  /** 碰撞检测子步长（px）。 */
+  private readonly detectStep: number;
   private readonly maxLength: number;
   private readonly dotSpacing: number;
   private readonly secondSegmentLength: number;
@@ -53,9 +72,17 @@ export class AimRaycaster {
   private firstCount = 0;
   private secondCount = 0;
 
+  /** 预分配的命中结果与命中点（零 GC）。 */
+  private readonly firstHit: RayHit = { hit: false, x: 0, y: 0, nx: 0, ny: 0, brick: false };
+  private readonly secondHit: RayHit = { hit: false, x: 0, y: 0, nx: 0, ny: 0, brick: false };
+  private readonly hitPointBuffer: { x: number; y: number } = { x: 0, y: 0 };
+  /** 预分配的砖块候选槽（同时接触的格子最多 4 个）。 */
+  private readonly brickCandidates: BrickCandidate[] = [];
+
   constructor(
     grid: BrickGrid,
     options?: {
+      /** 碰撞检测子步长（px），默认 `AIM_DETECT_STEP`。 */
       step?: number;
       maxLength?: number;
       dotSpacing?: number;
@@ -64,7 +91,7 @@ export class AimRaycaster {
     },
   ) {
     this.grid = grid;
-    this.step = options?.step ?? AIM_STEP;
+    this.detectStep = options?.step ?? AIM_DETECT_STEP;
     this.maxLength = options?.maxLength ?? AIM_MAX_LENGTH;
     this.dotSpacing = options?.dotSpacing ?? AIM_DOT_SPACING;
     this.secondSegmentLength = options?.secondSegmentLength ?? AIM_SECOND_SEGMENT_LENGTH;
@@ -73,6 +100,9 @@ export class AimRaycaster {
     for (let i = 0; i < 160; i++) {
       this.firstBuffer.push({ x: 0, y: 0, alpha: 1 });
       this.secondBuffer.push({ x: 0, y: 0, alpha: 1 });
+    }
+    for (let i = 0; i < 4; i++) {
+      this.brickCandidates.push({ col: -1, row: -1, nx: 0, ny: 0, depth: 0, frontality: 0 });
     }
   }
 
@@ -89,7 +119,8 @@ export class AimRaycaster {
     const dirX = Math.sin(rad);
     const dirY = -Math.cos(rad);
 
-    const hit = this.castRay(originX, originY, dirX, dirY, this.maxLength);
+    this.castRay(originX, originY, dirX, dirY, this.maxLength, this.firstHit);
+    const hit = this.firstHit;
 
     let endX: number;
     let endY: number;
@@ -100,7 +131,9 @@ export class AimRaycaster {
     if (hit.hit) {
       endX = hit.x;
       endY = hit.y;
-      hitPoint = { x: hit.x, y: hit.y };
+      this.hitPointBuffer.x = hit.x;
+      this.hitPointBuffer.y = hit.y;
+      hitPoint = this.hitPointBuffer;
       // 法线反射：dir' = dir - 2(dir·n)n
       const dot = dirX * hit.nx + dirY * hit.ny;
       reflectX = dirX - 2 * dot * hit.nx;
@@ -113,8 +146,9 @@ export class AimRaycaster {
     this.firstCount = this.fillDots(this.firstBuffer, originX, originY, endX, endY);
 
     this.secondCount = 0;
-    if (hitPoint && hit.hit) {
-      const secondHit = this.castRay(hitPoint.x, hitPoint.y, reflectX, reflectY, this.secondSegmentLength);
+    if (hitPoint) {
+      this.castRay(hitPoint.x, hitPoint.y, reflectX, reflectY, this.secondSegmentLength, this.secondHit);
+      const secondHit = this.secondHit;
       const secondEndX = secondHit.hit ? secondHit.x : hitPoint.x + reflectX * this.secondSegmentLength;
       const secondEndY = secondHit.hit ? secondHit.y : hitPoint.y + reflectY * this.secondSegmentLength;
       this.secondCount = this.fillDots(this.secondBuffer, hitPoint.x, hitPoint.y, secondEndX, secondEndY);
@@ -138,54 +172,161 @@ export class AimRaycaster {
 
   /**
    * 沿方向发射虚拟射线，复刻物理层的墙体与网格命中判定。
+   *
+   * 命中点统一返回**反弹后的球心位置**（距障碍面 `radius + CONTACT_EPSILON`），
+   * 保证第二段射线从命中点出发时不会在原点立刻再次碰撞。
    */
-  private castRay(originX: number, originY: number, dirX: number, dirY: number, maxLength: number): RayHit {
-    const noHit: RayHit = { hit: false, x: 0, y: 0, nx: 0, ny: 0, brick: false };
+  private castRay(
+    originX: number,
+    originY: number,
+    dirX: number,
+    dirY: number,
+    maxLength: number,
+    out: RayHit,
+  ): void {
+    const r = this.radius;
 
     let travelled = 0;
     while (travelled <= maxLength) {
       const px = originX + dirX * travelled;
       const py = originY + dirY * travelled;
 
-      // 世界三面墙
-      if (px - this.radius < WALL_LEFT) {
-        return { hit: true, x: px, y: py, nx: 1, ny: 0, brick: false };
+      // 世界三面墙：命中点回退到球面接触处（球心距墙面 radius + EPS）。
+      if (px - r < WALL_LEFT) {
+        this.fillWallHit(out, WALL_LEFT + r + CONTACT_EPSILON, py, 1, 0);
+        return;
       }
-      if (px + this.radius > WALL_RIGHT) {
-        return { hit: true, x: px, y: py, nx: -1, ny: 0, brick: false };
+      if (px + r > WALL_RIGHT) {
+        this.fillWallHit(out, WALL_RIGHT - r - CONTACT_EPSILON, py, -1, 0);
+        return;
       }
-      if (py - this.radius < WALL_TOP) {
-        return { hit: true, x: px, y: py, nx: 0, ny: 1, brick: false };
-      }
-
-      // 砖块网格直查
-      const col = this.grid.colAt(px);
-      const row = this.grid.rowAt(py);
-      if (this.grid.contains(col, row)) {
-        const cell = this.grid.at(col, row);
-        if (cell && cell.role !== 'EMPTY') {
-          const rect = this.grid.cellRect(col, row);
-          const centerX = rect.x + rect.width * 0.5;
-          const centerY = rect.y + rect.height * 0.5;
-          let nx = px - centerX;
-          let ny = py - centerY;
-          const len = Math.hypot(nx, ny);
-          if (len < 1e-6) {
-            nx = 0;
-            ny = -1;
-          } else {
-            nx /= len;
-            ny /= len;
-          }
-          // 碰撞点回退到球面接触处，避免圆点陷入砖内。
-          return { hit: true, x: px - dirX * this.radius, y: py - dirY * this.radius, nx, ny, brick: true };
-        }
+      if (py - r < WALL_TOP) {
+        this.fillWallHit(out, px, WALL_TOP + r + CONTACT_EPSILON, 0, 1);
+        return;
       }
 
-      travelled += this.step;
+      // 砖块：邻域圈选 + 圆 vs AABB 精确检测（与物理层同一套判定）。
+      if (this.detectBrick(px, py, dirX, dirY, out)) return;
+
+      travelled += this.detectStep;
     }
 
-    return noHit;
+    out.hit = false;
+    out.x = 0;
+    out.y = 0;
+    out.nx = 0;
+    out.ny = 0;
+    out.brick = false;
+  }
+
+  /** 写入墙面命中结果。 */
+  private fillWallHit(out: RayHit, x: number, y: number, nx: number, ny: number): void {
+    out.hit = true;
+    out.x = x;
+    out.y = y;
+    out.nx = nx;
+    out.ny = ny;
+    out.brick = false;
+  }
+
+  /**
+   * 砖块命中检测：圈选球心邻域 → 圆 vs AABB 最近点检测 → 最小分离轴法线。
+   *
+   * 与 `PhysicsEngine.detectCircleAabb` 保持同一套规则：
+   *   - 穿透深度最大者优先，深度持平时取与射线方向正面度最高者（Ghost Vertex 防护）；
+   *   - 法线为轴向分离法线 `(±1, 0)` / `(0, ±1)`，**不使用径向法线**。
+   */
+  private detectBrick(px: number, py: number, dirX: number, dirY: number, out: RayHit): boolean {
+    const grid = this.grid;
+    const r = this.radius;
+
+    let colMin = grid.colAt(px - r);
+    let colMax = grid.colAt(px + r);
+    let rowMin = grid.rowAt(py - r);
+    let rowMax = grid.rowAt(py + r);
+    if (colMax < colMin) colMax = colMin;
+    if (rowMax < rowMin) rowMax = rowMin;
+    if (colMin < 0) colMin = 0;
+    if (rowMin < 0) rowMin = 0;
+    if (colMax > grid.cols - 1) colMax = grid.cols - 1;
+    if (rowMax > grid.rows - 1) rowMax = grid.rows - 1;
+
+    let count = 0;
+    for (let row = rowMin; row <= rowMax; row++) {
+      for (let col = colMin; col <= colMax; col++) {
+        const cell = grid.at(col, row);
+        if (!cell || cell.role === 'EMPTY') continue;
+        const candidate = this.brickCandidates[count];
+        if (!candidate) break;
+        if (!this.detectCircleAabb(px, py, col, row, candidate)) continue;
+        candidate.col = col;
+        candidate.row = row;
+        candidate.frontality = -(candidate.nx * dirX + candidate.ny * dirY);
+        count++;
+      }
+    }
+    if (count === 0) return false;
+
+    // ---- Ghost Vertex 防护：选唯一"主碰撞面"（与物理层一致）----
+    let best = this.brickCandidates[0]!;
+    for (let i = 1; i < count; i++) {
+      const cand = this.brickCandidates[i]!;
+      if (cand.depth > best.depth + 1e-6) {
+        best = cand;
+      } else if (cand.depth > best.depth - 1e-6 && cand.frontality > best.frontality) {
+        best = cand;
+      }
+    }
+
+    out.hit = true;
+    out.nx = best.nx;
+    out.ny = best.ny;
+    out.brick = true;
+    // 沿分离法线推出完整穿透深度 → 球心距砖面 radius + EPS。
+    out.x = px + best.nx * (best.depth + CONTACT_EPSILON);
+    out.y = py + best.ny * (best.depth + CONTACT_EPSILON);
+    return true;
+  }
+
+  /**
+   * 圆心 vs 格子 AABB 的精确检测 + 最小分离轴求解（复刻物理层规则）。
+   */
+  private detectCircleAabb(px: number, py: number, col: number, row: number, out: BrickCandidate): boolean {
+    const rect = this.grid.cellRect(col, row);
+    const rectLeft = rect.x;
+    const rectRight = rect.x + rect.width;
+    const rectTop = rect.y;
+    const rectBottom = rect.y + rect.height;
+    const r = this.radius;
+
+    // 精确圆检测：圆心到 AABB 最近点的距离。
+    const closestX = px < rectLeft ? rectLeft : px > rectRight ? rectRight : px;
+    const closestY = py < rectTop ? rectTop : py > rectBottom ? rectBottom : py;
+    const dx = px - closestX;
+    const dy = py - closestY;
+    const distSq = dx * dx + dy * dy;
+    if (distSq >= r * r) return false;
+
+    // 分离轴（以球包围盒近似球体，沿轴取完整重叠深度）。
+    const overlapX = Math.min(px + r, rectRight) - Math.max(px - r, rectLeft);
+    const overlapY = Math.min(py + r, rectBottom) - Math.max(py - r, rectTop);
+    if (overlapX <= 0 || overlapY <= 0) return false;
+
+    const axis: 'x' | 'y' = overlapX < overlapY ? 'x' : 'y';
+    const depth = Math.min(overlapX, overlapY);
+
+    let nx = 0;
+    let ny = 0;
+    if (axis === 'x') {
+      nx = px < (rectLeft + rectRight) * 0.5 ? -1 : 1;
+    } else {
+      ny = py < (rectTop + rectBottom) * 0.5 ? -1 : 1;
+    }
+
+    out.nx = nx;
+    out.ny = ny;
+    out.depth = depth;
+    return true;
   }
 
   /**

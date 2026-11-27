@@ -18,10 +18,12 @@ import {
   canAffordSkin,
   canTrialSkin,
   clearRewardCoins,
+  consumeSkillCredit,
   consumeSkillStock,
   findSkin,
   grantClearReward,
   grantSkillStock,
+  impliedExtraStock,
   isSkinUnlocked,
   normalizeSaveData,
   recordBestTime,
@@ -193,5 +195,64 @@ describe('platform / 最佳秒数', () => {
     assert.equal(recordBestTime(save, 'level-1', 0), false);
     assert.equal(recordBestTime(save, 'level-1', Number.NaN), false);
     assert.equal(save.bestTimesSec['level-1'], undefined);
+  });
+});
+
+describe('platform / 技能额度记账（本关配额 vs 全局额外库存）', () => {
+  it('优先消耗本关配额，不动全局额外库存', () => {
+    const next = consumeSkillCredit({ quota: 3, extra: 2 });
+    assert.equal(next.quota, 2);
+    assert.equal(next.extra, 2);
+    assert.equal(next.usedExtra, false);
+  });
+
+  it('本关配额耗尽后才扣全局额外库存并标记 usedExtra', () => {
+    const next = consumeSkillCredit({ quota: 0, extra: 2 });
+    assert.equal(next.quota, 0);
+    assert.equal(next.extra, 1);
+    assert.equal(next.usedExtra, true);
+  });
+
+  it('配额与额外库存皆为 0 时不产生消耗', () => {
+    const next = consumeSkillCredit({ quota: 0, extra: 0 });
+    assert.equal(next.quota, 0);
+    assert.equal(next.extra, 0);
+    assert.equal(next.usedExtra, false);
+  });
+
+  it('连续消耗：配额 2 + 额外 1 时，第三次才动全局库存', () => {
+    let state = { quota: 2, extra: 1 };
+    let usedExtraFlags: boolean[] = [];
+    for (let i = 0; i < 3; i++) {
+      const next = consumeSkillCredit(state);
+      state = { quota: next.quota, extra: next.extra };
+      usedExtraFlags.push(next.usedExtra);
+    }
+    assert.deepEqual(usedExtraFlags, [false, false, true]);
+    assert.equal(state.quota, 0);
+    assert.equal(state.extra, 0);
+  });
+
+  it('重开不把已耗尽的全局库存回满（配额重置但额外库存保持剩余）', () => {
+    // 场景：本关配额 3 + 全局库存 1，用掉 4 次后全局库存应为 0。
+    let state = { quota: 3, extra: 1 };
+    for (let i = 0; i < 4; i++) {
+      const next = consumeSkillCredit(state);
+      state = { quota: next.quota, extra: next.extra };
+    }
+    assert.equal(state.quota, 0);
+    assert.equal(state.extra, 0);
+    // 重开：本关配额恢复初始值，但全局库存仍是 0，不会被回满。
+    const rebuilt = { quota: 3, extra: state.extra };
+    assert.equal(rebuilt.quota, 3);
+    assert.equal(rebuilt.extra, 0);
+  });
+
+  it('impliedExtraStock 只给出校验上界（引擎库存 - 本关配额）', () => {
+    assert.equal(impliedExtraStock(5, 3), 2);
+    assert.equal(impliedExtraStock(2, 3), 0);
+    assert.equal(impliedExtraStock(5, 0), 5);
+    assert.equal(impliedExtraStock(Number.NaN, 3), 0);
+    assert.equal(impliedExtraStock(5, Number.NaN), 5);
   });
 });

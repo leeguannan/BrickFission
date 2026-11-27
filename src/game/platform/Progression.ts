@@ -225,6 +225,50 @@ export function grantSkillStock(save: PlayerSaveData, key: SkillStockKey, count:
   return save[key];
 }
 
+/* ------------------------------------------------------------------ */
+/* 技能配额记账（本关配额 vs 全局额外库存）                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * 技能额度记账状态。
+ *
+ * - `quota`：**本关初始配额**（每关重置，不写盘，来源为关卡配置）；
+ * - `extra`：**全局额外库存**（广告/购买获得，写盘，跨关保留）。
+ */
+export interface SkillCreditState {
+  quota: number;
+  extra: number;
+}
+
+/**
+ * 消耗一次技能额度：优先扣本关配额，配额耗尽后才扣全局额外库存。
+ *
+ * `usedExtra` 为 true 表示本次消耗动用了全局库存，
+ * 调用方必须**真实扣减并写盘**，否则会出现"重开即回满"的刷技能漏洞。
+ */
+export function consumeSkillCredit(
+  state: SkillCreditState,
+): SkillCreditState & { usedExtra: boolean } {
+  const quota = Number.isFinite(state.quota) ? Math.max(0, Math.floor(state.quota)) : 0;
+  const extra = Number.isFinite(state.extra) ? Math.max(0, Math.floor(state.extra)) : 0;
+  if (quota > 0) return { quota: quota - 1, extra, usedExtra: false };
+  if (extra > 0) return { quota: 0, extra: extra - 1, usedExtra: true };
+  return { quota: 0, extra: 0, usedExtra: false };
+}
+
+/**
+ * 由引擎当前库存反推"可写盘"的全局额外库存**上界**。
+ *
+ * 引擎库存 = 本关剩余配额 + 全局额外库存 + 关内充能，
+ * 因此该值只能作为校验上界，不能直接当作全局库存写盘
+ * （否则关内充能会被误记为全局库存，导致重开后凭空回满）。
+ */
+export function impliedExtraStock(engineTotal: number, quota: number): number {
+  const total = Number.isFinite(engineTotal) ? Math.max(0, Math.floor(engineTotal)) : 0;
+  const levelQuota = Number.isFinite(quota) ? Math.max(0, Math.floor(quota)) : 0;
+  return Math.max(0, total - levelQuota);
+}
+
 /** 记录每关最佳秒数（只保留更快成绩），返回是否刷新纪录。 */
 export function recordBestTime(
   save: PlayerSaveData,

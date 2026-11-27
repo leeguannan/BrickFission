@@ -132,8 +132,20 @@ V1 虽以轻量耐玩为主，但必须跑通以下核心循环（Web 版即可�
 ### 6.2 商业化三循环落地对照（对应 §3）
 
 1. **失败复活**：`GameEngine.revive(3)`（`src/game/core/GameEngine.ts`）仅在 `LOST` 阶段可用，从 `dockedBallPosition` 按 `REVIVE_FAN_ANGLES` 扇形补发 3 球并回到 `PLAYING`；**不重建 `BrickGrid`**，天然满足「保留当前已清砖块进度」；`src/app/main.ts` 的 `watchRevive()` 走 `AdPlacement.REVIVE_KEEP_PROGRESS`，结算面板同时提供「复活续关」与「直接重开」。
-2. **技能补给**：蓝/橙标库存归零时按钮不再 `disabled`（`HudController.setSkillCounts` 仅加 `.empty` 告警样式），点击触发 `refillSkill()` → `AdPlacement.REFILL_SKILL_BLUE / REFILL_SKILL_ORANGE` → `engine.grantSkill()` 发放 `SKILL_REFILL_COUNT = 2` 次 → 写回存档；观看期间自动暂停物理与音频，结束后立即恢复。
+2. **技能补给**：蓝/橙标库存归零时按钮不再 `disabled`（`HudController.setSkillCounts` 仅加 `.empty` 告警样式），点击触发 `refillSkill()` → `AdPlacement.REFILL_SKILL_BLUE / REFILL_SKILL_ORANGE` → `engine.grantSkill()` 发放 `SKILL_REFILL_COUNT = 2` 次 → **写入全局额外库存并落盘**；观看期间自动暂停物理与音频，结束后立即恢复。
 3. **皮肤解锁/试用**：`SKIN_CATALOG`（胶囊蓝 0 / 翠竹节 120 / 极简白 200）+ `Progression.unlockSkin()` 扣币解锁，或 `AdPlacement.TRIAL_SKIN` 免费试用 1 局（`trialSkinId` 仅本次会话有效，`effectiveSkinId` 取 `trialSkinId ?? selectedPaddleSkin`）。
+
+> **技能额度记账模型（本关配额 vs 全局额外库存）**：技能额度被拆成两类，语义与生命周期完全不同：
+>
+> | 额度 | 来源 | 生命周期 | 是否写盘 |
+> | :--- | :--- | :--- | :--- |
+> | `levelQuota`（本关配额） | 关卡配置的 `initialSkills` | 每关重置，重开即恢复 | ❌ 不写盘 |
+> | `extraStock`（全局额外库存） | 激励广告补给 / 购买 | 跨关保留，真实扣减 | ✅ 写盘（`save.multiLaunchStock` / `save.tripleSplitStock`） |
+> | 关内充能 | 击碎 150 块砖自动奖励（`SKILL_GRANTED`） | 仅本关有效 | ❌ 不写盘 |
+>
+> 消耗顺序为 **本关配额 → 全局额外库存 → 关内充能**：`Progression.consumeSkillCredit()` 是唯一的扣减入口，只有真正动用了全局额外库存（`usedExtra === true`）才写盘。引擎库存 = 本关剩余配额 + 全局额外库存 + 关内充能量。
+>
+> ⚠️ **M4 旧口径已作废**：M4 初版用 `Math.max(存档库存, 引擎库存)` 回写存档，会把玩家**已经用掉的全局库存在重开后补满**，构成刷技能漏洞；Code Review 修复后改为写回全局额外库存的**真实剩余**，重开不再回满（见 §6.8）。关内击碎砖块充能也不再随离关写回存档。
 
 > **存档版本迁移（`saveVersion`）**：`PlayerSaveData` 在 M4 新增 `saveVersion`（当前为 1）。Milestone 3 及更早的存档没有该字段，且当时**尚不存在皮肤解锁机制**（旧默认存档把三款皮肤全部解锁），因此 `Progression.normalizeSaveData()` 对无 `saveVersion` 的旧存档执行一次迁移：把 `unlockedSkins` 回收为「仅基础皮肤」，金币、关卡进度、技能库存、最佳秒数等其余资产完整保留；带 `saveVersion` 的新存档则原样保留玩家已解锁的皮肤。`src/app/main.ts` 启动时把迁移结果立即写回，避免重复迁移。
 
@@ -183,6 +195,16 @@ V1 虽以轻量耐玩为主，但必须跑通以下核心循环（Web 版即可�
 
 | 命令 | 结果 |
 | :--- | :--- |
-| `npm test` | `tests 163 / pass 163 / fail 0`（core 56 · render 23 · levels 38 · studio 11 · platform 35） |
+| `npm test` | `tests 171 / pass 171 / fail 0`（core 58 · render 23 · levels 38 · studio 11 · platform 41） |
 | `npm run lint` | 零报错（`tsc -p tsconfig.core.json --noEmit && tsc --noEmit`） |
-| `npm run build` | 成功（vite 32 modules；dist index.html 3.66KB / CSS 8.93KB(gzip 2.60KB) / JS 135.55KB(gzip 39.34KB)，总量远低于 500KB 目标） |
+| `npm run build` | 成功（vite 32 modules；dist index.html 3.66KB / CSS 9.17KB(gzip 2.66KB) / JS 138.99KB(gzip 40.20KB)，总量远低于 500KB 目标） |
+
+### 6.8 Code Review 修复记录（架构师评审 5 项）
+
+| # | 问题 | 修复 | 验证 |
+| :--- | :--- | :--- | :--- |
+| 1 | 瞄准折线预测失真：砖块只测圆心单点、反射用径向法线、命中点未推出 → 第二段射线在原点立即再撞、折线消失 | `AimRaycaster` 改为「邻域圈选 + 圆-AABB 最近点检测」，法线改用与 `PhysicsEngine` 一致的 **AABB 轴向分离法线**（`±1,0` / `0,±1`），命中点沿法线推出 `radius + CONTACT_EPSILON`；碰撞检测步长收敛到 `AIM_DETECT_STEP = 1`（球半径 6.5px 时接触窗口约 13px，4px 粗步会跳过浅接触） | 新增 2 例：偏心垂直撞砖仍垂直折返、撞侧墙仍能画出第二段折线（`aim_raycaster.test.ts` 6 → 8 例） |
+| 2 | 重开本关可无限刷技能：`Math.max(存档库存, 引擎库存)` 把已用完的全局库存在重开时补满 | 拆分「本关配额」与「全局额外库存」，消耗顺序 quota → extra → 关内充能，仅动用到全局库存才写盘；`restartLevel()` 改为**重建引擎**（配额重置、全局库存保持真实剩余） | 新增 6 例配额记账用例（`progression.test.ts` 19 → 25 例） |
+| 3 | `AdaptiveBGM` 临时节点不回收；`WebAudioEngine` 无法注入微信端 AudioContext | 四个调度函数统一绑定 `onended` 自动 `disconnect()` 整条节点链（对齐 `ProceduralSFX.autoRelease`）；新增 `contextFactory?: () => AudioContext` 注入位（微信端可传 `wx.createWebAudioContext`） | `npm run lint` + 171 例单测全绿 |
+| 4 | 结算看广告翻倍后弹窗不再出现；模拟广告样式类名失配（`.bf-reward-count` vs `.bf-reward-countdown`） | 抽出 `showWinModal(elapsedSec, baseCoins, doubled)`，翻倍完成后**重显只含「重开本关 / 下一关」**的结算窗并附翻倍提示；CSS 补 `.bf-reward-countdown` / `.bf-reward-skip`，广告标题补 `bf-reward-title` class | `npm run build` 成功 |
+| 5 | `HudController.setSkillCounts` / `setCoins` 每帧无条件写 DOM | 增加脏值缓存（`lastBlueCount` / `lastOrangeCount` / `lastCoins`），数值未变不触碰 DOM（与 `setPausedLabel` 同思路） | `npm run lint` 零报错 |

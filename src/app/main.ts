@@ -33,6 +33,7 @@ import {
   SKIN_CATALOG,
   canAffordSkin,
   canTrialSkin,
+  consumeSkillCredit,
   findSkin,
   grantClearReward,
   isSkinUnlocked,
@@ -52,6 +53,7 @@ import {
 import { StudioController } from '../studio/StudioController.js';
 import '../studio/studio.css';
 import { HudController } from './HudController.js';
+import type { ModalAction } from './HudController.js';
 import { InputController } from './InputController.js';
 
 const SKIN_LABELS: Readonly<Record<string, string>> = {
@@ -83,6 +85,14 @@ class GameApp {
   private playingCustom = false;
   /** 激励广告免费试用的皮肤 ID（仅本局有效，不写入存档）。 */
   private trialSkinId: string | null = null;
+  /** 本关初始技能配额（每关重置，不写盘；来源为关卡配置）。 */
+  private levelQuota = { multi: 0, triple: 0 };
+  /** 全局额外技能库存（广告/购买获得，写盘；跨关保留且可被真实扣减）。 */
+  private extraStock = { multi: 0, triple: 0 };
+  /** 当前试玩的 Studio 自定义关卡运行时配置（重开时复用）。 */
+  private customConfig: LevelRuntimeConfig | null = null;
+  /** 最近一次通关用时（翻倍后重显结算窗时复用）。 */
+  private winElapsedSec = 0;
   private readonly studio: StudioController;
 
   /** 跨帧复用的脏砖缓冲（避免每帧分配，零 GC 红线在外壳层同样遵守）。 */
@@ -310,7 +320,9 @@ class GameApp {
         this.onLevelLost(event.remainingRatio);
         break;
       case 'SKILL_GRANTED':
-        break; // HUD 每帧同步库存，无需额外处理
+        // 关内击碎砖块充能得到的技能属于**关内收益**，不写入全局存档，
+        // 因此这里只依赖 HUD 每帧同步库存，不做任何账本操作。
+        break;
       default:
         break;
     }
@@ -367,7 +379,9 @@ class GameApp {
       void this.refillSkill('MULTI_LAUNCH');
       return;
     }
-    this.engine.useMultiLaunch();
+    const result = this.engine.useMultiLaunch();
+    if (!result.used) return;
+    this.consumeSkillCredit('MULTI_LAUNCH');
   }
 
   private useTripleSplit(): void {
@@ -375,7 +389,9 @@ class GameApp {
       void this.refillSkill('TRIPLE_SPLIT');
       return;
     }
-    this.engine.useTripleSplit();
+    const result = this.engine.useTripleSplit();
+    if (!result.used) return;
+    this.consumeSkillCredit('TRIPLE_SPLIT');
   }
 
   /* ---------------------------------------------------------------- */
@@ -398,9 +414,16 @@ class GameApp {
     try {
       const { rewarded } = await this.adapter.showRewardedVideo(placement);
       if (rewarded) {
-        const total = this.engine.grantSkill(skill, SKILL_REFILL_COUNT);
-        if (skill === 'MULTI_LAUNCH') this.save.multiLaunchStock = total;
-        else this.save.tripleSplitStock = total;
+        // 广告补给属于**全局额外库存**：引擎发放的同时记入 extraStock 并写盘，
+        // 使用时优先扣本关配额，配额耗尽后才会真实扣减这份全局库存。
+        this.engine.grantSkill(skill, SKILL_REFILL_COUNT);
+        if (skill === 'MULTI_LAUNCH') {
+          this.extraStock.multi += SKILL_REFILL_COUNT;
+          this.save.multiLaunchStock = this.extraStock.multi;
+        } else {
+          this.extraStock.triple += SKILL_REFILL_COUNT;
+          this.save.tripleSplitStock = this.extraStock.triple;
+        }
         this.adapter.writeSaveData(this.save);
       }
     } finally {
@@ -430,6 +453,34 @@ class GameApp {
     this.save.coins += baseCoins;
     this.adapter.writeSaveData(this.save);
     this.hud.setCoins(this.save.coins);
+    // 看完激励广告后必须**重新弹出结算窗**：
+    // 原实现看完只加金币，弹窗已被隐藏 → 玩家看不到翻倍结果，也没有下一步入口。
+    this.showWinModal(this.winElapsedSec, baseCoins, true);
+  }
+
+  /**
+   * 通关结算弹窗。
+   *
+   * @param doubled 是否已通过激励广告把金币翻倍（翻倍后不再提供"翻倍"入口）。
+   */
+  private showWinModal(elapsedSec: number, baseCoins: number, doubled: boolean): void {
+    const hasNext = !this.playingCustom && this.levelIndex + 1 < BUILTIN_LEVEL_COUNT;
+    const body = doubled
+      ? `基础奖励 ${baseCoins} 金币已翻倍，额外到账 ${baseCoins} 金币（当前 ${this.save.coins} 金币）`
+      : `用时 ${elapsedSec.toFixed(1)} 秒 · 获得 ${baseCoins} 金币 · 剩余灰墙不计入目标`;
+    const actions: ModalAction[] = [];
+    if (!doubled) {
+      actions.push({ label: '金币翻倍（观看激励）', onClick: () => void this.watchDoubleCoins(baseCoins) });
+    }
+    actions.push({ label: '重开本关', onClick: () => this.restartLevel() });
+    if (hasNext) {
+      actions.push({
+        label: '下一关',
+        primary: true,
+        onClick: () => this.switchLevel(this.levelIndex + 1),
+      });
+    }
+    this.hud.showModal('通关！', body, actions);
   }
 
   /** 皮肤商店（商业化循环 ③）。 */
@@ -494,29 +545,70 @@ class GameApp {
   }
 
   /**
-   * 用存档里的全局技能库存构造引擎。
+   * 用「本关配额 + 全局额外库存」构造引擎。
    *
-   * 取「关卡配置初始值」与「玩家全局库存」的较大者，保证换关不惩罚；
-   * 关卡内击碎砖块充能得到的库存会在离关时写回存档（`persistSkillStock`）。
+   * 两类库存严格分离：
+   *   - `levelQuota`：本关初始配额，每关重置，**不写盘**；
+   *   - `extraStock`：广告/购买获得的全局额外库存，跨关保留、**写盘**。
+   *
+   * 引擎库存 = 本关配额 + 全局额外库存（关内击碎砖块充能另计，属关内收益）。
    */
   private createEngine(level: LevelRuntimeConfig): GameEngine {
-    const levelBlue = level.initialSkills?.multiLaunchCount ?? 0;
-    const levelOrange = level.initialSkills?.tripleSplitCount ?? 0;
+    this.levelQuota = {
+      multi: level.initialSkills?.multiLaunchCount ?? 0,
+      triple: level.initialSkills?.tripleSplitCount ?? 0,
+    };
+    this.extraStock = {
+      multi: this.save.multiLaunchStock,
+      triple: this.save.tripleSplitStock,
+    };
     return new GameEngine({
       level,
       initialSkills: {
-        multiLaunchCount: Math.max(levelBlue, this.save.multiLaunchStock),
-        tripleSplitCount: Math.max(levelOrange, this.save.tripleSplitStock),
+        multiLaunchCount: this.levelQuota.multi + this.extraStock.multi,
+        tripleSplitCount: this.levelQuota.triple + this.extraStock.triple,
       },
     });
   }
 
-  /** 把本关剩余技能库存写回全局存档（只增不减）。 */
+  /**
+   * 把**全局额外库存的真实剩余**写回存档。
+   *
+   * 关键：写回的是 `extraStock` 本身，而不是"引擎当前库存"，
+   * 否则玩家用完的全局库存会在重开时被 `Math.max` 回满（刷技能漏洞）。
+   */
   private persistSkillStock(): void {
-    const inv = this.engine.skillInventory;
-    this.save.multiLaunchStock = Math.max(this.save.multiLaunchStock, inv.multiLaunchCount);
-    this.save.tripleSplitStock = Math.max(this.save.tripleSplitStock, inv.tripleSplitCount);
+    this.save.multiLaunchStock = this.extraStock.multi;
+    this.save.tripleSplitStock = this.extraStock.triple;
     this.adapter.writeSaveData(this.save);
+  }
+
+  /**
+   * 消耗一次技能额度：优先扣本关配额，配额耗尽才扣全局额外库存。
+   *
+   * 只有真正动用了全局库存时才写盘（配额是本关收益，不入存档）。
+   */
+  private consumeSkillCredit(skill: 'MULTI_LAUNCH' | 'TRIPLE_SPLIT'): void {
+    const isBlue = skill === 'MULTI_LAUNCH';
+    const next = consumeSkillCredit({
+      quota: isBlue ? this.levelQuota.multi : this.levelQuota.triple,
+      extra: isBlue ? this.extraStock.multi : this.extraStock.triple,
+    });
+    if (isBlue) {
+      this.levelQuota.multi = next.quota;
+      this.extraStock.multi = next.extra;
+      if (next.usedExtra) {
+        this.save.multiLaunchStock = next.extra;
+        this.adapter.writeSaveData(this.save);
+      }
+    } else {
+      this.levelQuota.triple = next.quota;
+      this.extraStock.triple = next.extra;
+      if (next.usedExtra) {
+        this.save.tripleSplitStock = next.extra;
+        this.adapter.writeSaveData(this.save);
+      }
+    }
   }
 
   private switchLevel(index: number): void {
@@ -535,6 +627,7 @@ class GameApp {
     this.persistSkillStock();
     this.levelIndex = safe;
     this.playingCustom = false;
+    this.customConfig = null;
     this.trialSkinId = null;
     this.engine = this.createEngine(getBuiltinRuntimeConfig(safe));
     this.renderer.setSkin(this.effectiveSkinId);
@@ -545,6 +638,7 @@ class GameApp {
   private loadCustomLevel(config: LevelRuntimeConfig): void {
     this.persistSkillStock();
     this.playingCustom = true;
+    this.customConfig = config;
     this.trialSkinId = null;
     this.engine = this.createEngine(config);
     this.renderer.setSkin(this.effectiveSkinId);
@@ -559,7 +653,13 @@ class GameApp {
   private restartLevel(): void {
     this.persistSkillStock();
     this.trialSkinId = null;
-    this.engine.restart();
+    // 重建引擎：本关配额重置为关卡初始值，
+    // 全局额外库存保持真实剩余（已用掉的不会被"重开即回满"）。
+    const level =
+      this.playingCustom && this.customConfig
+        ? this.customConfig
+        : getBuiltinRuntimeConfig(this.levelIndex);
+    this.engine = this.createEngine(level);
     this.renderer.setSkin(this.effectiveSkinId);
     this.afterLevelReload();
   }
@@ -619,22 +719,8 @@ class GameApp {
       this.save.unlockedLevel,
     );
 
-    const hasNext = !this.playingCustom && this.levelIndex + 1 < BUILTIN_LEVEL_COUNT;
-    this.hud.showModal(
-      '通关！',
-      `用时 ${elapsedSec.toFixed(1)} 秒 · 获得 ${baseCoins} 金币 · 剩余灰墙不计入目标`,
-      [
-        { label: '金币翻倍（观看激励）', onClick: () => void this.watchDoubleCoins(baseCoins) },
-        { label: '重开本关', onClick: () => this.restartLevel() },
-        ...(hasNext
-          ? [{
-              label: '下一关',
-              primary: true,
-              onClick: () => this.switchLevel(this.levelIndex + 1),
-            }]
-          : []),
-      ],
-    );
+    this.winElapsedSec = elapsedSec;
+    this.showWinModal(elapsedSec, baseCoins, false);
   }
 
   private onLevelLost(remainingRatio: number): void {

@@ -19,6 +19,7 @@ import {
   AIM_SECOND_SEGMENT_LENGTH,
   AIM_STEP,
   BALL_RADIUS,
+  WALL_RIGHT,
   WALL_TOP,
 } from '../constants.js';
 import { AimRaycaster } from '../AimRaycaster.js';
@@ -125,4 +126,64 @@ test('aim：预测路径长度不超过 900px', () => {
   const last = dots[count - 1]!;
   const length = Math.hypot(last.x - ORIGIN_X, last.y - ORIGIN_Y);
   assert.ok(length <= AIM_MAX_LENGTH, `预测长度不应超过 ${AIM_MAX_LENGTH}px，实际 ${length}`);
+});
+
+test('aim：偏心垂直撞砖仍按轴向法线垂直折返（不使用径向法线）', () => {
+  const level = levelWith([[21, 20, makeNormalCell(1, 0)]], 'aim-offset');
+  const grid = new BrickGrid(level);
+  const raycaster = new AimRaycaster(grid);
+
+  const brickRect = grid.cellRect(21, 20);
+  const brickCenterX = brickRect.x + brickRect.width * 0.5;
+  // 发射点偏离砖块中心 3px（仍在砖块水平范围内），用于暴露"径向法线歪折线"缺陷。
+  const offsetX = brickCenterX - 3;
+
+  const prediction = raycaster.predict(offsetX, 900, 0);
+
+  assert.ok(prediction.hitPoint, '应命中砖块');
+  const hitX = prediction.hitPoint.x;
+  const hitY = prediction.hitPoint.y;
+
+  // 轴向分离法线 (0, ±1)：命中点水平方向不偏移。
+  assert.ok(
+    Math.abs(hitX - offsetX) < 1e-6,
+    `命中点不应横向偏移（径向法线会偏移），实际 x=${hitX} 期望 ${offsetX}`,
+  );
+  // 命中点 = 反弹后的球心位置：距砖面 radius + EPS。
+  const expectedY = brickRect.y + brickRect.height + BALL_RADIUS;
+  assert.ok(
+    Math.abs(hitY - expectedY) < 0.01,
+    `命中点应停在砖面外 radius 处，实际 y=${hitY} 期望 ${expectedY}`,
+  );
+
+  // 第二段必须存在且垂直折返（x 不变、y 增大）。
+  assert.ok(prediction.secondSegmentCount >= 1, '命中后应给出第二段反射轨迹');
+  const first = prediction.secondSegment[0]!;
+  const last = prediction.secondSegment[prediction.secondSegmentCount - 1]!;
+  assert.ok(Math.abs(first.x - hitX) < 1e-6, '第二段应从命中点开始');
+  assert.ok(Math.abs(last.x - hitX) < 1e-6, '垂直撞砖后第二段应保持竖直');
+  assert.ok(last.y > hitY, '垂直撞砖后第二段应向下折返');
+});
+
+test('aim：撞侧墙后仍能画出第二段折线（命中点沿法线推出）', () => {
+  const grid = new BrickGrid(emptyLevel());
+  const raycaster = new AimRaycaster(grid);
+
+  // 向右上方发射，必定撞到右侧世界墙。
+  const prediction = raycaster.predict(ORIGIN_X, ORIGIN_Y, AIM_ANGLE_MAX_DEG);
+
+  assert.ok(prediction.hitPoint, '应命中右侧墙');
+  const hitX = prediction.hitPoint.x;
+  const hitY = prediction.hitPoint.y;
+  assert.ok(
+    Math.abs(hitX - (WALL_RIGHT - BALL_RADIUS)) < 0.01,
+    `命中点应停在墙面内 radius 处，实际 x=${hitX}`,
+  );
+
+  assert.ok(prediction.secondSegmentCount >= 1, '撞墙后应给出第二段反射轨迹');
+  const first = prediction.secondSegment[0]!;
+  const last = prediction.secondSegment[prediction.secondSegmentCount - 1]!;
+  assert.ok(Math.abs(first.x - hitX) < 1e-6, '第二段应从命中点开始');
+  assert.ok(Math.abs(first.y - hitY) < 1e-6, '第二段应从命中点开始');
+  assert.ok(last.x < hitX, '撞右墙后第二段应向左折返');
 });

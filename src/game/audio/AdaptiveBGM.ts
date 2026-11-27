@@ -174,6 +174,7 @@ export class AdaptiveBGM {
     gain.connect(this.layer1Gain);
     osc.start(when);
     osc.stop(when + 0.26);
+    this.autoDisconnect(osc, filter, gain);
   }
 
   /** 轻柔 Hi-hat：预烘焙白噪声 + 高通 + 极短包络。 */
@@ -192,6 +193,7 @@ export class AdaptiveBGM {
     gain.connect(this.layer1Gain);
     src.start(when);
     src.stop(when + 0.06);
+    this.autoDisconnect(src, filter, gain);
   }
 
   /** 柔和 Pad：双 detuned sawtooth 和声层，慢 attack 铺底。 */
@@ -214,6 +216,8 @@ export class AdaptiveBGM {
         gain.connect(this.layer2Gain);
         osc.start(when);
         osc.stop(when + duration + 0.05);
+        // 两个 detune 振荡器共用同一个 gain，重复 disconnect 是安全的（内部 try/catch）。
+        this.autoDisconnect(osc, gain);
       }
     }
   }
@@ -232,6 +236,31 @@ export class AdaptiveBGM {
     gain.connect(this.layer3Gain);
     osc.start(when);
     osc.stop(when + 0.12);
+    this.autoDisconnect(osc, gain);
+  }
+
+  /**
+   * 让临时节点链在音源结束后自动断开，避免长时间运行积累悬挂节点。
+   *
+   * WebAudio 节点不会自动回收，若不显式 `disconnect()`，
+   * 长时间游玩会持续累积已结束的振荡器/滤波器/增益节点。
+   * 思路与 `ProceduralSFX.autoRelease` 一致（此处不涉及声部计数，故不调用 limiter.release）。
+   */
+  private autoDisconnect(source: AudioScheduledSourceNode, ...nodes: AudioNode[]): void {
+    source.onended = () => {
+      for (const node of nodes) {
+        try {
+          node.disconnect();
+        } catch {
+          /* 已断开则忽略 */
+        }
+      }
+      try {
+        source.disconnect();
+      } catch {
+        /* 已断开则忽略 */
+      }
+    };
   }
 
   /** 一次性烘焙 0.1s 白噪声 buffer，供全部 Hi-hat 复用（零运行期分配）。 */

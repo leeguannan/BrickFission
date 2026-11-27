@@ -49,6 +49,10 @@ export class HudController {
   private readonly btnPause: HTMLButtonElement;
   /** 暂停标签上次写入值，用于跳过无变化的 DOM 写入。 */
   private lastPaused: boolean | null = null;
+  /** 脏值缓存：技能库存与金币数未变化时不触碰 DOM（每帧同步场景）。 */
+  private lastBlueCount: number | null = null;
+  private lastOrangeCount: number | null = null;
+  private lastCoins: number | null = null;
   private readonly levelNo: HTMLElement;
   private readonly btnBlue: HTMLButtonElement;
   private readonly btnOrange: HTMLButtonElement;
@@ -167,6 +171,10 @@ export class HudController {
   }
 
   setSkillCounts(blue: number, orange: number): void {
+    // 每帧同步时避免重复写 DOM（数值未变则不触碰）。
+    if (this.lastBlueCount === blue && this.lastOrangeCount === orange) return;
+    this.lastBlueCount = blue;
+    this.lastOrangeCount = orange;
     this.blueCount.textContent = String(blue);
     this.orangeCount.textContent = String(orange);
     // 库存为 0 时**不禁用**按钮：点击将进入「观看激励补给」流程（docs/04 §3.1 商业化循环 ②）。
@@ -176,7 +184,10 @@ export class HudController {
 
   /** 金币数（`docs/04` §3.1：解锁皮肤与过关奖励使用）。 */
   setCoins(coins: number): void {
-    this.coinCount.textContent = String(Math.max(0, Math.floor(coins)));
+    const value = Math.max(0, Math.floor(coins));
+    if (this.lastCoins === value) return;
+    this.lastCoins = value;
+    this.coinCount.textContent = String(value);
   }
 
   /** 显示结算/提示弹窗。 */

@@ -100,6 +100,14 @@ export const AIM_ANGLE_MIN_DEG = -72;
 export const AIM_ANGLE_MAX_DEG = 72;
 /** 射线步进长度（px）。 */
 export const AIM_STEP = 4;
+/**
+ * 射线**碰撞检测**子步长（px）。
+ *
+ * 球半径 6.5px 时，沿射线方向的接触窗口宽约 13px；
+ * 若沿用 4px 粗步检测会跳过浅接触窗口（表现为瞄准线"扎进"砖块），
+ * 故碰撞检测收敛到 1px 子步，圆点采样仍按 `AIM_DOT_SPACING` 等距输出。
+ */
+export const AIM_DETECT_STEP = 1;
 /** 射线最大长度（px）。 */
 export const AIM_MAX_LENGTH = 900;
 /** 第二段折线预览长度（px）。 */
