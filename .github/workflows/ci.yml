@@ -1,0 +1,99 @@
+name: CI
+
+# push 与 PR 都跑全套守门人：内核纯净度 → 类型 → 单测 → 压测 → AI 通关回归 → 浏览器 E2E → 构建产物体积
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 质量守门（lint / test / bench / bot / e2e / build）
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 准备 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 内核纯净度自检（src/game/core 禁止出现任何宿主 API）
+        run: |
+          set -e
+          PATTERN='\b(window|document|HTMLCanvasElement|AudioContext|requestAnimationFrame|React|navigator|localStorage|setTimeout|setInterval|fetch|OffscreenCanvas|wx\.)\b'
+          if grep -rnE "$PATTERN" src/game/core --include='*.ts'; then
+            echo "::error::src/game/core 出现宿主环境 API，违反内核纯净红线"
+            exit 1
+          fi
+          echo "内核纯净度自检通过"
+
+      - name: 危险动态执行自检（禁 eval / new Function / innerHTML）
+        run: |
+          set -e
+          if grep -rnE 'eval\(|new Function\(|\.innerHTML|\.outerHTML|document\.write' src --include='*.ts'; then
+            echo "::error::src 出现动态执行或字符串注入式 DOM 写入"
+            exit 1
+          fi
+          echo "危险动态执行自检通过"
+
+      - name: 类型检查（lint）
+        run: npm run lint
+
+      - name: 单元测试
+        run: npm test
+
+      - name: 性能压测（200 球上限）
+        run: npm run bench
+
+      - name: 20 关 AI 通关回归
+        run: npm run test:bot
+
+      - name: 安装 Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: 浏览器端到端测试
+        run: npm run test:e2e
+
+      - name: 上传 E2E 失败证据
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: 构建生产包
+        run: npm run build
+
+      - name: 产物体积守门（JS < 500KB）
+        run: |
+          set -e
+          JS_KB=$(du -k dist/assets/*.js | awk '{sum += $1} END {print sum}')
+          echo "产物 JS 体积：${JS_KB}KB"
+          if [ "$JS_KB" -ge 500 ]; then
+            echo "::error::产物 JS 体积 ${JS_KB}KB 超过 500KB 上限"
+            exit 1
+          fi
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
