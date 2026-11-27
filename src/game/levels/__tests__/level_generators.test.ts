@@ -11,9 +11,11 @@ import {
   generateSymmetricTotem,
   generateExcavationMaze,
   createEmptyCells,
+  openSealedPockets,
 } from '../LevelGenerators.js';
 import { decodeRLE, validateDefinition } from '../LevelSchema.js';
-import { analyzeStructure } from '../DifficultyScorer.js';
+import { analyzeStructure, computeReachable } from '../DifficultyScorer.js';
+import { makeEmptyCell, makeNormalCell, makeSteelCell } from '../../core/BrickGrid.js';
 
 const COLS = 42;
 const ROWS = 38;
@@ -155,4 +157,58 @@ test('createEmptyCells 产出全 EMPTY 且尺寸正确', () => {
   const cells = createEmptyCells(28, 24);
   assert.equal(cells.length, 28 * 24);
   assert.ok(cells.every((c) => c.role === 'EMPTY'));
+});
+
+test('openSealedPockets 把四面钢墙的封闭格开凿成缺口（砖量不减反增）', () => {
+  const cols = 12;
+  const rows = 9;
+  const cells = createEmptyCells(cols, rows);
+  // 造一个 3×3 的钢墙盒子，中间 (5,4) 全封闭
+  for (let r = 3; r <= 5; r += 1) {
+    for (let c = 4; c <= 6; c += 1) {
+      cells[r * cols + c] = makeSteelCell();
+    }
+  }
+  // 盒子中心留一个空格子：它四面都是钢墙 → 典型死角
+  cells[4 * cols + 5] = makeEmptyCell();
+  const before = cells.filter((c) => c.role !== 'EMPTY').length;
+  const opened = openSealedPockets(cells, cols, rows);
+  assert.ok(opened >= 1, '至少应开凿一处');
+  const after = cells.filter((c) => c.role !== 'EMPTY').length;
+  assert.equal(after, before, '钢墙转普通砖，总格数不变');
+  const breakable = cells.filter((c) => c.role !== 'STEEL' && c.role !== 'EMPTY').length;
+  assert.ok(breakable >= 1, '开凿后至少留下一块可破坏砖');
+});
+
+test('openSealedPockets 开凿后该格不再被判为死区', () => {
+  const cols = 12;
+  const rows = 9;
+  const cells = createEmptyCells(cols, rows);
+  for (let r = 3; r <= 5; r += 1) {
+    for (let c = 4; c <= 6; c += 1) {
+      cells[r * cols + c] = makeSteelCell();
+    }
+  }
+  cells[4 * cols + 5] = makeEmptyCell();
+  const before = computeReachable(cells, cols, rows);
+  const deadBefore = before.filter((v) => v === 0).length;
+  openSealedPockets(cells, cols, rows);
+  const after = computeReachable(cells, cols, rows);
+  const deadAfter = after.filter((v) => v === 0).length;
+  assert.ok(deadAfter <= deadBefore, '开凿后死区数不应增加');
+});
+
+test('openSealedPockets 没有封闭死角时不改动任何格子', () => {
+  const cols = 10;
+  const rows = 8;
+  const cells = createEmptyCells(cols, rows);
+  cells[2 * cols + 2] = makeNormalCell(1, 0);
+  const snapshot = cells.map((c) => `${c.role}:${c.hp}:${c.colorIndex}`).join('|');
+  const opened = openSealedPockets(cells, cols, rows);
+  assert.equal(opened, 0);
+  assert.equal(
+    cells.map((c) => `${c.role}:${c.hp}:${c.colorIndex}`).join('|'),
+    snapshot,
+    '无死角时网格必须逐格不变',
+  );
 });

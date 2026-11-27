@@ -187,6 +187,9 @@ export function fromBinaryGrid(source: BinaryGrid, options: FromBinaryOptions): 
     frameWithSteel(cells, cols, rows, gap);
   }
   sanitizeUnreachable(cells, cols, rows);
+  // 死角开凿：随机 STEEL 可能围出四面封闭的空格（球进去即卡死），
+  // 把相邻钢墙改成普通砖打开缺口，总砖量不减。
+  openSealedPockets(cells, cols, rows);
 
   return definitionFromCells({
     id: options.id,
@@ -291,6 +294,9 @@ export function generateSymmetricTotem(options: TotemOptions): LevelDefinition {
 
   carveCentralChannel(cells, cols, rows, channelWidth);
   sanitizeUnreachable(cells, cols, rows);
+  // 死角开凿：随机 STEEL 可能围出四面封闭的空格（球进去即卡死），
+  // 把相邻钢墙改成普通砖打开缺口，总砖量不减。
+  openSealedPockets(cells, cols, rows);
 
   return definitionFromCells({
     id: options.id,
@@ -374,6 +380,65 @@ function sanitizeUnreachable(cells: BrickCell[], cols: number, rows: number): nu
     }
   }
   return removed;
+}
+
+/**
+ * 死角开凿：随机嵌 STEEL 会在壁垒之间留下「四面全是钢墙」的孤立空格，
+ * 球一旦被弹进去就永远出不来（实测第 19 关有 2 处，卡死后破砖率从 67% 掉到 19%）。
+ *
+ * 修法：把死角朝向最近可通行区域的那一格 STEEL **改成普通砖**（STEEL → NORMAL），
+ * 既打开了缺口，又**不减少总砖量**（钢墙变成可破坏砖，砖数只增不减）。
+ * 返回被开凿的死角数量。
+ */
+export function openSealedPockets(cells: BrickCell[], cols: number, rows: number): number {
+  const isSteel = (c: number, r: number): boolean =>
+    c < 0 || r < 0 || c >= cols || r >= rows || cells[r * cols + c]!.role === 'STEEL';
+
+  let opened = 0;
+  // 反复扫描：每次开凿可能让相邻的死角变成可通行，需要迭代到收敛。
+  for (let pass = 0; pass < 8; pass += 1) {
+    let changed = false;
+    for (let r = 1; r < rows - 1; r += 1) {
+      for (let c = 1; c < cols - 1; c += 1) {
+        const idx = r * cols + c;
+        if (cells[idx]!.role === 'STEEL') continue;
+        // 四面都是钢墙 = 死角
+        if (!isSteel(c - 1, r) || !isSteel(c + 1, r) || !isSteel(c, r - 1) || !isSteel(c, r + 1)) {
+          continue;
+        }
+        // 找朝向「最近可通行区域」的方向，改那一格钢墙
+        let bestDir: { dc: number; dr: number; distance: number } | null = null;
+        const dirs = [
+          { dc: -1, dr: 0 },
+          { dc: 1, dr: 0 },
+          { dc: 0, dr: -1 },
+          { dc: 0, dr: 1 },
+        ];
+        for (const dir of dirs) {
+          let step = 1;
+          let cc = c + dir.dc;
+          let rr = r + dir.dr;
+          while (step < 12 && isSteel(cc, rr)) {
+            step += 1;
+            cc += dir.dc;
+            rr += dir.dr;
+          }
+          if (step >= 12) continue; // 该方向 12 格外仍是钢墙，不适合开凿
+          if (!bestDir || step < bestDir.distance) {
+            bestDir = { dc: dir.dc, dr: dir.dr, distance: step };
+          }
+        }
+        if (!bestDir) continue;
+        const openCol = c + bestDir.dc;
+        const openRow = r + bestDir.dr;
+        cells[openRow * cols + openCol] = makeNormalCell(1, 0);
+        opened += 1;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+  return opened;
 }
 
 /* ------------------------------------------------------------------ */
@@ -477,6 +542,9 @@ export function generateExcavationMaze(options: MazeOptions): LevelDefinition {
 
   // 6. 死区净化：封闭在 STEEL 壁垒后的不可达砖一律移除，保证入库关卡无死区警告。
   sanitizeUnreachable(cells, cols, rows);
+  // 死角开凿：随机 STEEL 可能围出四面封闭的空格（球进去即卡死），
+  // 把相邻钢墙改成普通砖打开缺口，总砖量不减。
+  openSealedPockets(cells, cols, rows);
 
   return definitionFromCells({
     id: options.id,

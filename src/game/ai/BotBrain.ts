@@ -34,6 +34,7 @@ const CORNER_AIM_OFFSET = 2.5;
 const DENSITY_RADIUS = 2;
 /** 破口目标的前瞻格数：沿「挡板→洞」方向再往前看多少格统计实心砖。 */
 const BREACH_LOOKAHEAD_CELLS = 5;
+
 /** 走廊采样步长（px）。 */
 const CORRIDOR_STEP_PX = 2;
 /** 走廊侧向采样偏移（px）：0 与 ±(球半径 + 余量)。 */

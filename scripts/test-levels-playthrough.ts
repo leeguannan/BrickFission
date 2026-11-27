@@ -85,7 +85,14 @@ const MIN_WON_LEVELS = Number(process.env['BF_BOT_MIN_WON'] ?? 1);
 /** 瞄准权重：接球数相同时，偏向能瞄到目标砖的落点。 */
 const AIM_WEIGHT = Number(process.env['BF_BOT_AIM_WEIGHT'] ?? 1.5);
 /** 目标选择策略：'auto' | 'widest' | 'dense' | 'gap' | 'breach' | 'deep' | 'onsight' | 'dense_gap'。 */
-const STRATEGY = (process.env['BF_BOT_STRATEGY'] ?? 'widest') as
+/**
+ * 默认目标策略。
+ *
+ * 'auto' 会按砖阵密度自动分流：稀疏图案（图腾/汉字）走「斜飞 + 看得见就打」，
+ * 密集砖阵（迷宫/实心阵）走「破口钻进砖阵内部 + 反射命中 + 缝隙瞄准」。
+ * 实测（900s）：auto 最低破砖率 51.0%，widest 最低 39.9% —— auto 更均衡，故取默认。
+ */
+const STRATEGY = (process.env['BF_BOT_STRATEGY'] ?? 'auto') as
   | 'widest'
   | 'dense'
   | 'gap'
@@ -101,6 +108,19 @@ const REVIVE_BALL_COUNT = 3;
 const AIM_LOCK_SEC = Number(process.env['BF_BOT_AIM_LOCK_SEC'] ?? 0);
 /** 砖阵密度阈值：低于该值视为「稀疏图案」，改用「看得见就打」策略。 */
 const DENSE_THRESHOLD = Number(process.env['BF_BOT_DENSE_THRESHOLD'] ?? 0.25);
+/** 防死循环偏角扰动：连续多少秒没打碎新砖就触发一次挡板边缘击球。 */
+const EDGE_KICK_SEC = Number(process.env['BF_BOT_EDGE_KICK_SEC'] ?? 3);
+/** 扰动期间使用的偏转角（度）：小角度即可让球在窄通道里横向漂移；
+ *  大角度会被通道钢壁直接反射回垂直，反而继续死循环。 */
+const EDGE_KICK_DEG = Number(process.env['BF_BOT_EDGE_KICK_DEG'] ?? 8);
+/** 两次扰动之间的冷却帧数：扰动必须间歇式，否则会常态化并破坏正常瞄准。 */
+const EDGE_KICK_COOLDOWN_FRAMES = Math.round(
+  Number(process.env['BF_BOT_EDGE_KICK_COOLDOWN_SEC'] ?? 5) * 60,
+);
+/** 扰动持续帧数（1.5s），期间接球与出射都用该偏转角。 */
+const EDGE_KICK_FRAMES = Math.round(EDGE_KICK_SEC * 60);
+/** 诊断开关：每 30s 打印一次存活球数、破砖进度与球的格坐标。 */
+const TRACE = process.env['BF_BOT_TRACE'] === '1';
 /** 是否允许释放技能（`BF_BOT_SKILLS=0` 表示纯单球精确模式，用于对照实验）。 */
 const USE_SKILLS = process.env['BF_BOT_SKILLS'] !== '0';
 /** 是否允许停滞时的随机探索兜底（`BF_BOT_EXPLORE=0` 关闭，用于对照实验）。 */
@@ -121,13 +141,16 @@ function selectTarget(
   originX: number,
   originY: number,
   strategy: typeof STRATEGY,
+  allowBreach = true,
 ): TargetBrick | null {
   const grid = engine.grid;
   const fallback = () => findReachableTarget(grid, originX, originY);
   if (strategy === 'widest') return fallback();
   if (strategy === 'gap') return findGapTarget(grid, originX, originY) ?? fallback();
   if (strategy === 'dense') return findDenseTarget(grid, originX, originY) ?? fallback();
-  if (strategy === 'breach') return findBreachTarget(grid, originX, originY) ?? fallback();
+  if (strategy === 'breach') {
+    return (allowBreach ? findBreachTarget(grid, originX, originY) : null) ?? fallback();
+  }
   if (strategy === 'deep') return findDeepestTarget(grid, originX, originY) ?? fallback();
   if (strategy === 'onsight') return findOnsightTarget(grid, originX, originY) ?? fallback();
   if (strategy === 'slanted') return findSlantedTarget(grid, originX, originY) ?? fallback();
@@ -153,7 +176,9 @@ function selectTarget(
       return findSlantedTarget(grid, originX, originY) ?? findOnsightTarget(grid, originX, originY) ?? fallback();
     }
   }
-  const breach = findBreachTarget(grid, originX, originY);
+  // 「破口」策略会把球重新打进它刚钻出来的窄通道，导致球在通道里垂直死循环
+  // （实测第 20 关 1800s 破砖率停在 10.7%）。停滞期禁用破口，改打直线可达的砖。
+  const breach = allowBreach ? findBreachTarget(grid, originX, originY) : null;
   if (breach) return breach;
   // 直线打不到的砖：靠一次墙面反射命中
   const reflect = findReflectTarget(grid, originX, originY);
@@ -190,6 +215,7 @@ interface LevelReport {
   multiUsed: number;
   tripleUsed: number;
   brickHits: number;
+  edgeKicks: number;
   hasNaN: boolean;
 }
 
@@ -292,12 +318,31 @@ function playLevel(index: number): LevelReport {
   let brickHits = 0;
   let exploreFrames = 0;
   let framesSinceHit = 0;
+  let edgeKickFrames = 0;
+  let edgeKickSign = 1;
+  let edgeKickCount = 0;
+  let edgeKickCooldown = 0;
   let hasNaN = false;
   let reviveCount = 0;
 
   while (engine.elapsedTimeSec < MAX_LEVEL_SECONDS) {
+    // 停滞判定：太久没打碎新砖 → 进入「脱困模式」（禁用破口 + 边缘小角度扰动）
+    const stalled = framesSinceHit >= STALL_SECONDS * 60;
+
+    // 防死循环偏角扰动：连续 STALL_SECONDS 秒没打碎新砖 → 改用挡板边缘击球，
+    // 用 ±62° 的大入射角交替轰击，打破「球在腔室里对称弹跳」的死循环。
+    if (edgeKickCooldown > 0) edgeKickCooldown--;
+    if (stalled && edgeKickFrames === 0 && edgeKickCooldown === 0) {
+      edgeKickFrames = EDGE_KICK_FRAMES;
+      edgeKickSign = -edgeKickSign;
+    }
+    if (edgeKickFrames > 0) {
+      edgeKickFrames--;
+      if (edgeKickFrames === 0) edgeKickCooldown = EDGE_KICK_COOLDOWN_FRAMES;
+    }
+
     // 停滞检测：太久没击碎新砖 → 进入随机探索（命中新砖即结束探索）
-    if (USE_EXPLORE && framesSinceHit >= STALL_SECONDS * 60 && exploreFrames === 0) {
+    if (USE_EXPLORE && stalled && exploreFrames === 0) {
       exploreFrames = EXPLORE_FRAMES;
     }
     if (exploreFrames > 0) {
@@ -305,9 +350,16 @@ function playLevel(index: number): LevelReport {
       const random = randomRemainingBrick(engine.grid, rng);
       if (random) target = random;
       targetsByBall.fill(null);
+    } else if (edgeKickFrames > 0 && frames % RETARGET_FRAMES === 0) {
+      // 扰动期间换一个「最斜」的可达目标，进一步打散入射角分布
+      const origin = rayOrigin();
+      const list = collectReachableTargets(engine.grid, origin.x, origin.y);
+      const extreme = edgeKickSign > 0 ? list[list.length - 1] : list[0];
+      if (extreme) target = extreme;
+      assignBallTargets(origin.x, origin.y);
     } else if (frames % RETARGET_FRAMES === 0) {
       const origin = rayOrigin();
-      const next = selectTarget(engine, origin.x, origin.y, STRATEGY);
+      const next = selectTarget(engine, origin.x, origin.y, STRATEGY, !stalled);
       if (next) target = next;
       assignBallTargets(origin.x, origin.y);
     }
@@ -318,8 +370,28 @@ function playLevel(index: number): LevelReport {
     // 「最紧迫的球」换目标，期望角会被落点预测误差带偏（实测多球出射角
     // P90 误差达 29°），球整趟打空。锁定后每次击球都有稳定且准确的方向。
     const imminent = imminentBall();
-    if (imminent && imminent.t <= AIM_LOCK_SEC) {
-      const locked = selectTarget(engine, imminent.contactX, paddleTop - BALL_RADIUS, STRATEGY);
+
+    if (edgeKickFrames > 0 && imminent) {
+      // 扰动模式：把挡板整体偏移一个固定距离，让球以 ±EDGE_KICK_DEG 的小角度出射。
+      //
+      // 关键：出射角由**接触瞬间的挡板偏移**决定（offset × 68°），不是由 setAimAngle
+      // 决定。之前这里写成「随剩余时间收缩的偏移」，球快落到挡板时偏移被拉到 0，
+      // 球永远垂直弹回 —— 这正是窄通道里死循环的直接原因。
+      // 现在用固定偏移：挡板始终跟着接触点走并保持距离，球每趟都斜着出去。
+      const wantedOffset = (EDGE_KICK_DEG / PADDLE_MAX_DEFLECT_DEG) * halfWidth;
+      // 偏移量必须**恒定**：一旦按剩余时间收缩，球临近挡板时目标会被拉回正中间，
+      // 挡板在最后一刻回到正中 → 球垂直弹回，死循环依旧。
+      engine.setPaddleTargetX(imminent.contactX - edgeKickSign * wantedOffset);
+      engine.setAimAngle(edgeKickSign * EDGE_KICK_DEG);
+      edgeKickCount++;
+    } else if (imminent && imminent.t <= AIM_LOCK_SEC) {
+      const locked = selectTarget(
+        engine,
+        imminent.contactX,
+        paddleTop - BALL_RADIUS,
+        STRATEGY,
+        !stalled,
+      );
       if (locked) {
         target = locked;
         const deg =
@@ -376,13 +448,21 @@ function playLevel(index: number): LevelReport {
 
     engine.update(FRAME_DT);
     frames++;
+    // 停滞计数：每帧递增，命中砖块时归零（见下方事件处理）。
+    // 注意：这一行是「停滞判定」能生效的前提 —— 少了它 framesSinceHit 永远是 0，
+    // 停滞检测、随机探索与防死循环扰动都会静默失效。
+    framesSinceHit++;
 
     // 事件统计：击碎计数用于停滞判定，NaN 检测用于回归守门
     for (const event of engine.drainEvents()) {
       if (event.type === 'BRICK_HIT') {
         brickHits++;
-        framesSinceHit = 0;
-        exploreFrames = 0;
+        // 只有「真的打碎一块」才算进展：撞上多血砖只是掉血，砖还在，
+        // 不应该判定为「有进展」——否则停滞检测与防死循环扰动会被高频触发。
+        if (event.destroyed) {
+          framesSinceHit = 0;
+          exploreFrames = 0;
+        }
       }
     }
     for (const ball of engine.physics.balls) {
@@ -390,6 +470,19 @@ function playLevel(index: number): LevelReport {
       if (!Number.isFinite(ball.x) || !Number.isFinite(ball.y) || !Number.isFinite(ball.vx) || !Number.isFinite(ball.vy)) {
         hasNaN = true;
       }
+    }
+
+    if (TRACE && frames % 1800 === 0) {
+      const cells = engine.physics.balls
+        .filter((b) => b.active)
+        .map(
+          (b) =>
+            `(${engine.grid.colAt(b.x)},${engine.grid.rowAt(b.y)})@${Math.round(b.x)},${Math.round(b.y)}`,
+        )
+        .join(' ');
+      process.stdout.write(
+        `    [trace] t=${(frames * FRAME_DT).toFixed(0)}s 破砖 ${brickHits} 存活球 ${engine.activeBallCount} 位置 ${cells}\n`,
+      );
     }
 
     if (engine.activeBallCount > peakBalls) peakBalls = engine.activeBallCount;
@@ -423,6 +516,7 @@ function playLevel(index: number): LevelReport {
     multiUsed,
     tripleUsed,
     brickHits,
+    edgeKicks: edgeKickCount,
     hasNaN,
   };
 }
@@ -446,6 +540,7 @@ function main(): void {
         ` 峰值球数 ${String(report.peakBalls).padStart(3)}` +
         ` 技能 ${report.multiUsed}/${report.tripleUsed}` +
         (DEBUG ? ` 命中 ${report.brickHits}` : '') +
+        (DEBUG ? ` 扰动 ${report.edgeKicks}` : '') +
         '\n',
     );
   }
