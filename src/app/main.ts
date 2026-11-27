@@ -24,7 +24,6 @@ import { Canvas2DRenderer } from '../game/render/Canvas2DRenderer.js';
 import type {
   DirtyBrickUpdate,
   GameSnapshot,
-  IRenderer,
   RenderContextData,
 } from '../game/render/IRenderer.js';
 import { WebAdapter } from '../game/platform/WebAdapter.js';
@@ -55,6 +54,7 @@ import '../studio/studio.css';
 import { HudController } from './HudController.js';
 import type { ModalAction } from './HudController.js';
 import { InputController } from './InputController.js';
+import { installE2EProbe } from './e2eProbe.js';
 
 const SKIN_LABELS: Readonly<Record<string, string>> = {
   [PADDLE_SKIN_CAPSULE_BLUE]: '经典蓝胶囊',
@@ -70,7 +70,7 @@ const PARTICLE_COUNTS = [2, 3] as const;
 class GameApp {
   private readonly adapter = new WebAdapter();
   private readonly audio: IAudioEngine = new WebAudioEngine();
-  private readonly renderer: IRenderer;
+  private readonly renderer: Canvas2DRenderer;
   private readonly hud: HudController;
   private readonly input: InputController;
   private readonly save: PlayerSaveData;
@@ -173,7 +173,34 @@ class GameApp {
     this.lastFrameAt = performance.now();
     this.rafId = requestAnimationFrame(this.frame);
 
+    this.installTestProbe();
+
     window.addEventListener('pagehide', this.dispose, { once: true });
+  }
+
+  /**
+   * 安装端到端测试探针。
+   *
+   * 仅当 URL 带 `?e2e=1` 时才在 `window.__BF_TEST__` 暴露只读快照与造局助手；
+   * 正常访问不挂载任何全局变量（无作弊后门）。
+   */
+  private installTestProbe(): void {
+    installE2EProbe({
+      getEngine: () => this.engine,
+      getCoins: () => this.save.coins,
+      getLevelIndex: () => this.levelIndex,
+      getDebugCounters: () => {
+        const counters = this.renderer.getDebugCounters();
+        return {
+          frameCount: counters.frameCount,
+          brickLayerBlits: counters.brickLayerBlits,
+          dirtyCellRepaints: counters.dirtyCellRepaints,
+          brickLayerRebuilds: counters.brickLayerRebuilds,
+          mainThreadArcCalls: counters.mainThreadArcCalls,
+        };
+      },
+      getBalls: () => this.engine.physics.balls,
+    });
   }
 
   /** 页面卸载时停止循环并释放音频/输入资源。 */

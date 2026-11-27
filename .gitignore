@@ -7,3 +7,8 @@ coverage/
 dist/
 .vite/
 .npm-cache/
+# Playwright 产物
+test-results/
+playwright-report/
+blob-report/
+.playwright/
