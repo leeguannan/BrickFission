@@ -110,6 +110,7 @@ src/
 | M3 | `src/game/levels/`（Schema / 三大生成器 / 难度评分器 / 20 关库）+ `src/studio/` Level Studio | `cee9b63` | 38 例关卡单测 + 11 例工作台单测；Studio 自动评分 34ms |
 | M4 | 商业化闭环（复活 / 技能补给 / 皮肤商店 / 金币 / 解锁持久化）、`src/game/platform/WechatAdapter.stub.ts`、安全区与 Banner 预留 | 见 §6 交付清单 | 35 例平台单测 + 13 例商业化内核单测；`npm run lint` 零报错；`npm run build` 成功；满池压测平均 0.011ms/帧 |
 | M5 | Step 2 微策略爆破：BOMB / PRISM / CORE 三种特殊砖 + 精准接球 Fever 暴走 + 渲染/音频/HUD 呈现 + Studio 新笔刷 | 见 §7 | 新增 44 例单测（总计 242 例）；`npm run test:bot` **17/20 + 最低破砖率 70.2%**，第 04/10/17/18/19/20 关与基线**逐帧一致** |
+| M6 | 微信小游戏无 DOM 运行时与打包链路：`src/wechat/main.ts`（无 DOM 壳层）、`src/game/render/CanvasHudRenderer.ts`（Canvas 版 HUD + 弹窗）、`src/game/platform/CanvasHitTester.ts`（纯逻辑命中区）、`scripts/build-wechat.ts`（`npm run build:wechat`） | 见 §8 | 新增 38 例单测（总计 280 例）；`dist-wechat/game.js` 实测 **139.96KB**（上限 500KB）；产物零 `document.` / `window.` / `HTMLCanvasElement` / `localStorage` / `eval(` / `new Function(`；CI 新增「微信打包 + 产物纯净度复核」两步 |
 
 ### 5.1 已知文档口径差（提交前如实标注）
 
@@ -131,21 +132,23 @@ src/
 | 命令 | 作用 | 当前结果 |
 | :--- | :--- | :--- |
 | `npm run lint` | `tsc -p tsconfig.core.json --noEmit && tsc --noEmit`（内核纯净 + 全量类型） | 零报错 |
-| `npm test` | `node:test` 单元测试（core / render / levels / platform / ai / studio） | 198 例全绿 |
+| `npm test` | `node:test` 单元测试（core / render / levels / platform / ai / studio / wechat） | 280 例全绿 |
 | `npm run bench` | 满池物理压测（引擎球池上限 200 球） | 平均 0.007~0.011ms/帧 |
 | `npm run test:bot` | 20 关 AI 无头通关回归（`scripts/test-levels-playthrough.ts`） | **V1 拍板基线**：17/20 通关 + 无 NaN/不可恢复 LOST + 全关破砖率 ≥70% + 单关 ≤300s → 实测 **17/20**，最低破砖率 70.2%（第 09 关），**exit 0** |
 | `npm run test:bot:ci` | 同 `test:bot`（保留别名，CI 与本地同一门禁） | 同上 |
-| `npm run test:e2e` | Playwright 浏览器端到端（`tests/e2e/game.spec.ts`） | 5 条链路全绿 |
+| `npm run test:e2e` | Playwright 浏览器端到端（`tests/e2e/game.spec.ts`） | 6 条链路全绿 |
 | `npm run test:all` | 上述六步串行执行（宽松档口径） | 全绿 |
 | `npm run test:ai` | 仅机器人 AI 单元测试（`src/game/ai/__tests__/`） | 15 例全绿 |
-| `npm run build` | Vite 生产构建 | 产物 JS 144.45KB（gzip 43.92KB），远低于 500KB 目标 |
+| `npm run build` | Vite 生产构建 | 产物 JS 160.88KB（gzip 48.21KB），远低于 500KB 目标 |
+| `npm run build:wechat` | 微信小游戏打包（单文件 IIFE + `game.json` / `project.config.json` / `README_WECHAT.md`） | `dist-wechat/game.js` **139.96KB**；体积与禁用串守门全部通过 |
 
 ### 6.2 分层结构
 
-* **单元测试层**：`src/game/core/__tests__/`、`src/game/render/__tests__/`、`src/game/levels/__tests__/`、`src/game/platform/__tests__/`、`src/studio/__tests__/`，共 171 例。
+* **单元测试层**：`src/game/core/__tests__/`、`src/game/render/__tests__/`、`src/game/levels/__tests__/`、`src/game/platform/__tests__/`、`src/studio/__tests__/`、`src/wechat/__tests__/`，共 280 例。
 * **AI 通关回归层**：`src/game/ai/BotBrain.ts` 是**纯逻辑**接球 AI（走廊检测 + 目标选取 + 偏转反解 + 多球接球贪心），与 `GameEngine` 共用同一套物理；`scripts/test-levels-playthrough.ts` 用它驱动 20 个内置关卡，断言无 NaN、无 LOST 提前失败、每关破砖进度达标。
-* **浏览器端到端层**：`playwright.config.ts` 自动拉起 Vite dev server（Chromium headless）；`tests/e2e/game.spec.ts` 覆盖启动健康度、输入链路、玩法链路、商业化链路、Level Studio 五条链路。
-* **CI 层**：`.github/workflows/ci.yml` 在 push/PR 上依次执行内核纯净度 grep、危险动态执行 grep、`lint`、`test`、`bench`、`test:bot`、安装 Chromium 后跑 `test:e2e`（失败上传截图与报告 Artifact）、`build` 并断言产物 JS < 500KB。
+* **浏览器端到端层**：`playwright.config.ts` 自动拉起 Vite dev server（Chromium headless）；`tests/e2e/game.spec.ts` 覆盖启动健康度、输入链路、玩法链路、商业化链路、Level Studio、Step 2 状态探针六条链路。
+* **微信运行时层**：`src/wechat/__tests__/wechat_runtime.test.ts` 在纯 Node 里构造完整 `globalThis.wx` 伪宿主（画布 2D 上下文 / 触摸 / windowInfo / storage / 激励视频 / WebAudioContext），直接驱动微信入口跑 300+ 帧，验证启动发球、拖动控板、触发技能、点击 HUD 暂停·商店·结算复活、切后台自动暂停并挂起音频。
+* **CI 层**：`.github/workflows/ci.yml` 在 push/PR 上依次执行内核纯净度 grep、危险动态执行 grep、`lint`、`test`、`bench`、`test:bot`、安装 Chromium 后跑 `test:e2e`（失败上传截图与报告 Artifact）、`build` 并断言产物 JS < 500KB、`build:wechat` 并复核微信产物体积与禁用串。
 
 ### 6.3 E2E 测试探针（无作弊后门）
 
@@ -349,3 +352,58 @@ src/
 4. **`toDefinition()` 会把维度夹到 `MIN_COLS=28` / `MIN_ROWS=24`**：10×8 的小网格导出会抛「格子数不足」，往返测试必须用 28×24。
 5. **「Fever 加伤害」是最容易击穿 V1 回归红线的改动**：机器人对砖块破碎时机高度敏感，1 血砖无害但 **2 血砖的破碎时机一变、轨迹就变**（内置 20 关有 6532 块 2 血砖）。凡是要改「伤害结算」的玩法，必须用同种子跑 `npm run test:bot` 做 A/B 回归，并补「时序守卫」单测。
 6. **`npm run test:bot | tail` 会掩盖失败退出码**：管道里 `tail` 的退出码会覆盖脚本退出码，回归门禁必须直接看脚本退出码或日志里的 `EXIT=` 行。
+
+---
+
+## 8. Milestone 6（微信小游戏无 DOM 运行时与打包链路）交付说明（2026-11-28）
+
+### 8.1 交付物清单
+
+| 文件 | 作用 |
+| :--- | :--- |
+| `src/wechat/main.ts` | 微信端**无 DOM 壳层**：画布装配、触摸输入、HUD/弹窗模型、商业化闭环、生命周期、帧循环；帧循环与触摸回调均可注入，便于 Node 直驱 |
+| `src/game/render/CanvasHudRenderer.ts` | **Canvas 版 HUD**：顶部状态栏（关卡 / 剩余砖数 / 金币 / 暂停 / 倍速）、Fever 能量条、底部蓝/橙技能按钮（含余量角标）、READY_AIM 瞄准提示；另含暂停/选关、通关结算（含翻倍激励）、失败复活、皮肤商店四类弹窗 |
+| `src/game/platform/CanvasHitTester.ts` | **纯逻辑命中区**：720×1280 逻辑坐标下计算 HUD 与弹窗按钮热区，区分「UI 点击消费」与「战场拖动瞄准/控板」，并校验热区互不重叠、不落入右上角胶囊区与底部 Banner 禁区 |
+| `scripts/build-wechat.ts` | 微信打包脚本（`npm run build:wechat`）：产出 `dist-wechat/`（`game.js` 单文件 IIFE + `game.json` + `project.config.json` + `README_WECHAT.md`），内置**体积 + 禁用串守门** |
+| `src/wechat/__tests__/wechat_runtime.test.ts` | 伪 `globalThis.wx` 宿主下的微信运行时单测（15 例） |
+
+### 8.2 关键设计与取舍
+
+1. **HUD 与弹窗全部走 Canvas**：微信小游戏没有 DOM / CSS，Web 端的 `index.html` + `HudController` + `InputController` 在微信端一律不可引入，因此另写一套 `CanvasHudRenderer`（纯 `fillRect` + `fillText`，**零 `arc` / 零渐变 / 零路径**，与渲染层「主循环零 arc」铁律一致）。
+2. **不改动 `Canvas2DRenderer`**：微信端 `wx.createCanvas()` 第一次调用是屏幕主画布、第二次是逻辑画布。逻辑画布交给 `renderer.init(logicCanvas, 720, 1280, 1)` 复用既有渲染器，每帧把逻辑画布整体 blit 到主画布（等比 contain，`scale = min(w/720, h/1280)`）。代价是每帧一次全屏缩放 blit，换来的是渲染层零改动、微信/Web 双端行为一致。
+3. **命中区与渲染分离**：`CanvasHitTester` 只算矩形，不碰渲染；`CanvasHudRenderer` 只画，不算命中。弹窗打开时 `setOverlay()` 屏蔽全部 HUD（模态语义，避免误触技能按钮）。
+4. **Banner 可见时底部按钮整体上移**：`safeAreaTop` 逐档下移顶部条；Banner 可见时技能按钮中心 y 被夹到 `interactiveBottom - 52`，保证热区底边不落进 Banner 禁区（微信「防诱导点击」红线）。
+5. **触摸 API 与 `WechatApi` 解耦**：`wx.onTouchStart/onTouchMove/onTouchEnd` 单独定义为 `WechatTouchApi`，不并入 `WechatApi`——否则既有平台单测里的 `const api: WechatApi = {...}` 替身会编译失败。
+6. **切后台三重处理**：`wx.onHide` / `wx.onAudioInterruptionBegin` → 暂停物理 + `audio.setPaused(true)` + `audio.setBackground(true)`（挂起 WebAudio），回前台由玩家点击继续。
+7. **音频上下文来自宿主**：`WechatAdapter.createAudioContext()` 包装 `wx.createWebAudioContext()`，注入 `WebAudioEngine` 的 `contextFactory`，不触碰浏览器全局 `AudioContext`。
+
+### 8.3 打包守门（`npm run build:wechat`）
+
+| 检查项 | 阈值 / 规则 | 实测 |
+| :--- | :--- | :--- |
+| `game.js` 体积 | < 500KB（目标 150KB~300KB） | **139.96KB**（未压缩 IIFE；低于 150KB 目标下限，但远低于硬上限） |
+| `document.` | 禁止出现 | 未命中 |
+| `HTMLCanvasElement` | 禁止出现 | 未命中 |
+| `localStorage` | 禁止出现 | 未命中 |
+| `eval(` | 禁止出现 | 未命中 |
+| `new Function(` | 禁止出现 | 未命中 |
+| `window.` | 禁止出现（额外加严） | 未命中 |
+
+> 为此把 `src/game/render/Canvas2DRenderer.ts` 里 `this.mainCanvas as HTMLCanvasElement` 改成了结构化断言 `as unknown as { width: number; height: number }`：TypeScript 类型断言编译后本就会消失，但保留字面量会让产物纯净度检查形同虚设。
+
+### 8.4 测试证据
+
+| 项目 | 数值 |
+| :--- | :--- |
+| 新增单测 | **38 例**（platform 命中区 13 + render Canvas HUD 10 + wechat 运行时 15） |
+| 单测总计 | **280 例全绿**（M5 收尾时为 242 例） |
+| `npm run lint` | 零报错 |
+| `npm run test:bot` | 17/20 通关 + 最低破砖率 70.2%（M5 收尾时同口径，未退化） |
+| `npm run build:wechat` | 守门全过；`dist-wechat/game.js` 139.96KB |
+
+### 8.5 本轮踩坑记录（供后续复用）
+
+1. **`setBannerVisible` 自递归**：外壳 `setBannerVisible()` → 适配器广播 `onBannerVisibilityChange` → 外壳回调再调 `setBannerVisible()`，直接栈溢出。修法是拆成「对外广播」与「内部重建布局」两段，回调只走后者。
+2. **伪宿主必须补齐音源节点**：`createOscillator()` / `createBufferSource()` 只返回 `connect/disconnect` 会在第一次发声时抛 `osc.start is not a function`。伪 AudioContext 至少要实现 `start/stop/onended` 与 `createBuffer`。
+3. **`READY_AIM` 阶段没有「暂停」语义**：`GameEngine.pause()` 在未发球时不会把阶段切成 `PAUSED`。测试「暂停面板」与「音频打断」必须先发球进入 `PLAYING`。
+4. **皮肤商店的行序以 `SKIN_CATALOG` 为准**：`capsule_blue`（默认已装备）→ `bamboo_green`（可试用）→ `minimal_white`，第 2 行命中的是 `shop.bamboo_green.trial`。

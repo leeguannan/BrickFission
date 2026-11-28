@@ -22,6 +22,7 @@ export interface MockCtxCounters {
   stroke: number;
   createLinearGradient: number;
   createRadialGradient: number;
+  fillText: number;
 }
 
 export class Mock2DCtx {
@@ -36,9 +37,17 @@ export class Mock2DCtx {
     stroke: 0,
     createLinearGradient: 0,
     createRadialGradient: 0,
+    fillText: 0,
   };
   /** drawImage 的第一个参数（源画布）按调用次序记录。 */
   readonly drawImageSources: MockCanvas[] = [];
+  /** fillText 的文本与坐标按调用次序记录（CanvasHudRenderer 断言用）。 */
+  readonly textCalls: { text: string; x: number; y: number }[] = [];
+  /** fillRect 的矩形参数按调用次序记录（宽度/高度断言用）。 */
+  readonly fillRects: { x: number; y: number; width: number; height: number }[] = [];
+  font = '10px sans-serif';
+  textAlign: CanvasTextAlign = 'start';
+  textBaseline: CanvasTextBaseline = 'alphabetic';
   fillStyle: string | CanvasGradient = '#000000';
   strokeStyle: string | CanvasGradient = '#000000';
   lineWidth = 1;
@@ -68,14 +77,19 @@ export class Mock2DCtx {
   stroke(): void {
     this.counters.stroke++;
   }
-  fillRect(..._args: number[]): void {
+  fillRect(x: number, y: number, width: number, height: number): void {
     this.counters.fillRect++;
+    this.fillRects.push({ x, y, width, height });
   }
   strokeRect(..._args: number[]): void {
     this.counters.strokeRect++;
   }
   clearRect(..._args: number[]): void {
     this.counters.clearRect++;
+  }
+  fillText(text: string, x: number, y: number): void {
+    this.counters.fillText++;
+    this.textCalls.push({ text, x, y });
   }
   save(): void {}
   restore(): void {}

@@ -157,6 +157,21 @@ export class WechatAdapter implements IPlatformAdapter {
     return canvas as unknown as AnyCanvas;
   }
 
+  /**
+   * 创建微信 WebAudio 上下文。
+   *
+   * 微信小游戏的 WebAudio 与浏览器 WebAudio 不完全一致，
+   * 必须由 `wx.createWebAudioContext()` 提供；该方法作为
+   * `contextFactory` 注入 `WebAudioEngine`（见 `src/wechat/main.ts`）。
+   */
+  createAudioContext(): unknown {
+    try {
+      return this.api.createWebAudioContext();
+    } catch {
+      return null;
+    }
+  }
+
   loadSaveData(): PlayerSaveData {
     try {
       const raw = this.api.getStorageSync(SAVE_DATA_KEY);

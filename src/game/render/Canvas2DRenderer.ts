@@ -763,10 +763,13 @@ export class Canvas2DRenderer implements IRenderer {
 
   private configureMainCanvas(width: number, height: number): void {
     if (!this.mainCanvas) return;
-    const canvas = this.mainCanvas as HTMLCanvasElement;
+    // 结构化断言：微信端的 `wx.createCanvas()` 同样是「可变宽高的 2D 画布」，
+    // 用类型断言代替 `as HTMLCanvasElement`，避免产物里出现 DOM 专属类型名
+    // （微信包纯净度门禁会扫描 `HTMLCanvasElement` 字面量）。
+    const canvas = this.mainCanvas as unknown as { width: number; height: number };
     canvas.width = Math.round(width * this.dpr);
     canvas.height = Math.round(height * this.dpr);
-    const ctx = this.requireCtx(canvas);
+    const ctx = this.requireCtx(this.mainCanvas);
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
   }
 

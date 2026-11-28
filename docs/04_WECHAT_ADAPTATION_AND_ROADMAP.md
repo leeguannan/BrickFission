@@ -232,3 +232,59 @@ V1 虽以轻量耐玩为主，但必须跑通以下核心循环（Web 版即可�
 * Fever 取「2× 伤害倍率」分支（而非全场穿透）还有一个额外好处：**不会让球长时间直穿砖阵飞出底线**，微信端的「复活续关 / 技能补给」商业化触点不会被高频触发。
 * **Fever 的 2× 倍率只对「已受损砖」生效**（`cell.hp < cell.maxHp`）：1 血 / 2 血砖的破碎时序与基线一致，3 血及以上砖被加速击碎；连击计数在 Fever 期间翻倍（纯表现层，不影响物理）。实测 `npm run test:bot` 与基线**逐帧一致**（17/20、最低破砖率 70.2%），详见 `docs/00` §7.2。微信端沿用同一份 `GameEngine`，无任何额外分支。
 * **微信端 HUD 复用点**：`FeverSnapshot{energy, maxEnergy, active, remainingSec, durationSec, damageMultiplier}` 已被 `src/app/e2eProbe.ts` 暴露为只读状态，M6 的 `CanvasHudRenderer` 直接读同一份快照即可画能量条，不需要在微信端另算一套能量逻辑。
+
+---
+
+## 8. Milestone 6（微信小游戏无 DOM 运行时与打包链路）落地记录（2026-11-28）
+
+### 8.1 交付文件清单（相对 M5 基线 `ac826e7`）
+
+| 文件 | 作用 |
+| :--- | :--- |
+| `src/wechat/main.ts` | 微信端无 DOM 壳层（画布装配 / 触摸输入 / HUD 弹窗模型 / 商业化闭环 / 生命周期 / 可注入帧循环） |
+| `src/game/render/CanvasHudRenderer.ts` | Canvas 版 HUD 与四类弹窗（纯 `fillRect` + `fillText`，零 `arc` / 零渐变） |
+| `src/game/platform/CanvasHitTester.ts` | 720×1280 逻辑坐标下的纯逻辑命中区计算与合规校验 |
+| `src/game/platform/__tests__/canvas_hit_tester.test.ts` | 命中区单测（13 例） |
+| `src/game/render/__tests__/canvas_hud_renderer.test.ts` | Canvas HUD 单测（10 例） |
+| `src/wechat/__tests__/wechat_runtime.test.ts` | 伪 `globalThis.wx` 宿主下直驱微信入口的运行时单测（15 例） |
+| `scripts/build-wechat.ts` | `npm run build:wechat`：打包 + 体积/禁用串守门 |
+| `dist-wechat/`（构建产物，不入库） | `game.js`（单文件 IIFE）/ `game.json` / `project.config.json` / `README_WECHAT.md` |
+
+### 8.2 与 §2 合规红线的逐条对照
+
+| §2 红线 | 本轮落地方式 | 实测 |
+| :--- | :--- | :--- |
+| 主包 < 4MB、目标 < 500KB | `npm run build:wechat` 内置体积守门 | `dist-wechat/game.js` **139.96KB** |
+| 无 DOM（不依赖 `document` / `window` / `HTMLCanvasElement`） | HUD 与弹窗改为 Canvas 绘制；`Canvas2DRenderer` 的 `as HTMLCanvasElement` 断言改为结构化断言 | 产物禁用串 grep 全部未命中 |
+| 禁 `eval` / `new Function` | 打包脚本内置 grep 守门，CI 复核 | 未命中 |
+| 顶部安全区避开右上角胶囊 | `CanvasHitTester` 计算胶囊区（宽 96 / 高 40，右上内缩），断言所有 HUD 热区不落入 | 13 例命中区单测覆盖 |
+| 底部 Banner 100~140px 且操作线在 Banner 上方 ≥80px | Banner 可见时技能按钮中心 y 上移到 `interactiveBottom - 52`；`computeBannerLayout` 仍为唯一事实源 | 单测断言按钮热区底边 ≤ 高度-100-80 |
+| 切后台自动 PAUSED + 音频 suspend | `wx.onHide` / `wx.onAudioInterruptionBegin` → 暂停物理 + `audio.setPaused(true)` + `audio.setBackground(true)` | 伪宿主单测断言 `ctx.state === 'suspended'` 且阶段为 `PAUSED` |
+| 激励视频防重入 | 复用 `WechatAdapter.showRewardedVideo()` 的单例复用 + `onClose(res.isEnded)` 判定 | 微信运行时单测覆盖复活链路 |
+| 存档走 `wx.setStorageSync` | `WechatAdapter.loadSaveData/writeSaveData` 走 `wx.getStorageSync/setStorageSync`，键仍为 `brick_fission_save_v1` | 单测断言内存存档落地 |
+
+### 8.3 打包产物与导入方式
+
+```
+dist-wechat/
+├── game.js              # 单文件 IIFE，143317 字节（139.96KB）
+├── game.json            # deviceOrientation: "portrait"，showStatusBar: false
+├── project.config.json  # compileType: "game"，es6: true，AppID 需自行替换
+└── README_WECHAT.md     # 导入步骤与合规要点
+```
+
+导入：微信开发者工具 → 导入项目 → 目录选 `dist-wechat/` → AppID 换成自己的小游戏 AppID → 编译 → 预览扫码真机验证。
+
+### 8.4 已知限制（如实说明）
+
+1. **每帧一次全屏缩放 blit**：微信端把逻辑画布（720×1280）整体 `drawImage` 到屏幕主画布，等比 contain。真机高分屏下这一笔是主要填充开销；后续如需优化，可改为「逻辑画布直接按 dpr 渲染 + 物理坐标不变」，但那会改动 `Canvas2DRenderer` 的 `init` 契约，本轮刻意不做。
+2. **逻辑分辨率固定 720×1280**：与 Web 端保持一致，机型差异通过 contain 黑边消化；未做动态分辨率适配。
+3. **`wx.getWindowInfo()` 为准**：不再使用已废弃的 `wx.getSystemInfoSync()`；safeArea 取自 `windowInfo.safeArea`。
+4. **未做真机验证**：本轮验证为「Node 伪宿主 + 打包产物纯净度」层面，真实机型上的帧率、触控手感与激励视频真实拉起需在开发者工具/真机复核，代码未留后门。
+
+### 8.5 CI 接入
+
+`.github/workflows/ci.yml` 新增两步：
+
+1. `npm run build:wechat` —— 打包并执行脚本内置守门（体积 < 500KB、禁用串）；
+2. 「微信产物纯净度复核」—— 独立 grep 复核 `dist-wechat/game.js` 体积与 `document.` / `HTMLCanvasElement` / `localStorage` / `eval(` / `new Function(` / `window.`；同时上传 `dist-wechat/` 为 Artifact。

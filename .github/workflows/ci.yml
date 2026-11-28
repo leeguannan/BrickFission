@@ -91,9 +91,36 @@ jobs:
             exit 1
           fi
 
+      - name: 微信小游戏打包（含体积 / 禁用串守门）
+        run: npm run build:wechat
+
+      - name: 微信产物纯净度复核（无 DOM / 无 eval / 无 localStorage）
+        run: |
+          set -e
+          BUNDLE=dist-wechat/game.js
+          test -f "$BUNDLE"
+          BUNDLE_KB=$(du -k "$BUNDLE" | awk '{print $1}')
+          echo "微信产物 game.js 体积：${BUNDLE_KB}KB"
+          if [ "$BUNDLE_KB" -ge 500 ]; then
+            echo "::error::微信产物 game.js ${BUNDLE_KB}KB 超过 500KB 上限"
+            exit 1
+          fi
+          if grep -qE 'document\.|HTMLCanvasElement|localStorage|eval\(|new Function\(|window\.' "$BUNDLE"; then
+            echo "::error::微信产物出现 DOM / 动态执行相关代码"
+            exit 1
+          fi
+          echo "微信产物纯净度复核通过"
+
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
         with:
           name: dist
           path: dist/
+          retention-days: 7
+
+      - name: 上传微信小游戏产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-wechat
+          path: dist-wechat/
           retention-days: 7

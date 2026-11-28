@@ -5,6 +5,7 @@ npm-debug.log*
 coverage/
 .nyc_output/
 dist/
+dist-wechat/
 .vite/
 .npm-cache/
 # Playwright 产物
