@@ -284,6 +284,23 @@ export class SkillSystem {
   /* ---------------------------------------------------------------- */
 
   /**
+   * 把超出的球数转化为伤害倍率（公开入口）。
+   *
+   * Milestone 5 / Step 2 的棱镜砖（PRISM）分裂子球时，若球池已满，
+   * 超出的子球同样按 §5.2 的 Ball Cap & Overflow Damage 规则转化为伤害倍率，
+   * 保证「棱镜分裂」不会绕过球数上限机制。
+   */
+  raiseOverflowDamage(
+    overflowCount: number,
+    maxBalls: number,
+    emit?: (event: GameEvent) => void,
+  ): number {
+    if (overflowCount <= 0) return this.overloadMultiplier;
+    this.raiseOverload(overflowCount, maxBalls, emit);
+    return this.overloadMultiplier;
+  }
+
+  /**
    * 把超出的球数转化为伤害倍率。
    *
    * 规则：溢出量 > 0 → ×2；溢出量超过球池容量的 `OVERLOAD_HIGH_RATIO` → ×3。

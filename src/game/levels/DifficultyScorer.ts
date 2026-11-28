@@ -158,6 +158,8 @@ export function analyzeStructure(cells: readonly BrickCell[], cols: number, rows
         continue;
       }
       if (cell.role === 'EMPTY') continue;
+      // Milestone 5 / Step 2：BOMB / PRISM / CORE 与普通砖一样属于可破坏砖，
+      // 同样参与可达性（死区检测）、破砖数与血量密度评分。
       breakableCount++;
       totalHp += cell.hp;
       if (!visited[r * cols + c]) deadZoneBrickCount++;

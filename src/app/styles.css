@@ -165,6 +165,60 @@ body {
 }
 
 /* ------------------------------------------------------------------ */
+/* Milestone 5 / Step 2：Fever 能量条（顶部栏下方）                     */
+/* ------------------------------------------------------------------ */
+
+.fever-bar {
+  top: calc(7% + 8px);
+  left: 12%;
+  right: 12%;
+  height: 12px;
+  border-radius: 6px;
+  background: rgba(8, 16, 46, 0.7);
+  border: 1px solid rgba(255, 77, 157, 0.35);
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+/* 有能量或激活时显示 */
+.fever-bar.visible {
+  opacity: 1;
+}
+
+.fever-fill {
+  width: 0%;
+  height: 100%;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #ff4d9d, #ff9a4d);
+  transition: width 0.12s linear;
+}
+
+/* Fever 激活：整条发光 + 文字高亮 */
+.fever-bar.active {
+  border-color: rgba(255, 214, 102, 0.95);
+  box-shadow: 0 0 14px rgba(255, 77, 157, 0.75);
+}
+
+.fever-bar.active .fever-fill {
+  background: linear-gradient(90deg, #ffd166, #ff4d9d);
+}
+
+.fever-label {
+  position: absolute;
+  right: 8px;
+  top: -16px;
+  font-size: 10px;
+  letter-spacing: 2px;
+  color: #ff9ad2;
+  opacity: 0.9;
+}
+
+.fever-bar.active .fever-label {
+  color: #ffd166;
+}
+
+/* ------------------------------------------------------------------ */
 /* 左侧技能列（逻辑 x24~110, y800~1020）                                */
 /* ------------------------------------------------------------------ */
 

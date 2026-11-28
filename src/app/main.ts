@@ -278,6 +278,8 @@ class GameApp {
       endgameAssist: e.isEndgameAssistActive,
       paddleSkinId: this.effectiveSkinId,
       muted: this.muted,
+      // Milestone 5 / Step 2：Fever 快照（可选字段，渲染层据此绘制拖尾与边框光效）
+      fever: e.feverSnapshot,
     };
     const data: RenderContextData = {
       engineState: this.snapshot,
@@ -350,9 +352,54 @@ class GameApp {
         // 关内击碎砖块充能得到的技能属于**关内收益**，不写入全局存档，
         // 因此这里只依赖 HUD 每帧同步库存，不做任何账本操作。
         break;
+      /* ---------------- Milestone 5 / Step 2 ---------------- */
+      case 'BOMB_EXPLODED':
+        this.audio.playBombExplosion();
+        this.renderer.triggerScreenShake(12, 320);
+        this.adapter.vibrateShort('heavy');
+        this.spawnBurstParticles(event.x, event.y, event.affectedCount + 6, 6);
+        break;
+      case 'PRISM_SPLIT':
+        this.audio.playPrismSplit();
+        this.spawnBurstParticles(event.x, event.y, 6, 5);
+        break;
+      case 'CORE_GRANTED':
+        this.audio.playCoreGrant();
+        this.renderer.triggerScreenShake(6, 180);
+        this.spawnBurstParticles(event.x, event.y, 8, 3);
+        break;
+      case 'PRECISE_CATCH':
+        this.audio.playPreciseCatch();
+        break;
+      case 'FEVER_ACTIVATED':
+        this.audio.playFeverActivate();
+        this.audio.setFever(true);
+        this.renderer.triggerScreenShake(16, 420);
+        this.adapter.vibrateShort('heavy');
+        break;
+      case 'FEVER_ENDED':
+        this.audio.playFeverEnd();
+        this.audio.setFever(false);
+        break;
       default:
         break;
     }
+  }
+
+  /**
+   * Milestone 5 / Step 2：特殊砖爆破 / 分裂 / 充能的粒子爆发。
+   *
+   * 复用 `ParticlePool` 定长对象池（零运行期分配），
+   * 颜色直接用预烘焙碎块贴图索引区分语义。
+   */
+  private spawnBurstParticles(
+    x: number,
+    y: number,
+    count: number,
+    colorIndex: number,
+  ): void {
+    const total = Math.max(1, Math.min(24, Math.round(count)));
+    this.renderer.spawnEffectBurst?.(x, y, colorIndex, total);
   }
 
   /* ---------------------------------------------------------------- */
@@ -778,6 +825,9 @@ class GameApp {
     // 暂停态每帧同步（含后台自动暂停/恢复），保证按钮图标与真实状态一致。
     this.hud.setPausedLabel(this.engine.currentPhase === 'PAUSED');
     this.hud.setCoins(this.save.coins);
+    // Milestone 5 / Step 2：Fever 能量条
+    const fever = this.engine.feverSnapshot;
+    this.hud.setFever(fever.energy, fever.maxEnergy, fever.active);
   }
 }
 

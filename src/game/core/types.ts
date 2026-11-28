@@ -91,10 +91,45 @@ export type GameEvent =
   | { type: 'ENDGAME_ASSIST'; targetCol: number; targetRow: number }
   | { type: 'SKILL_GRANTED'; skill: 'MULTI_LAUNCH' | 'TRIPLE_SPLIT'; total: number }
   // --- 追加扩展（Milestone 4 商业化预留）：复活续关 ---
-  | { type: 'REVIVED'; ballCount: number };
+  | { type: 'REVIVED'; ballCount: number }
+  // --- 追加扩展（Milestone 5 / Step 2 特殊砖与 Fever 暴走）---
+  | { type: 'BOMB_EXPLODED'; col: number; row: number; x: number; y: number; affectedCount: number }
+  | { type: 'PRISM_SPLIT'; x: number; y: number; spawnedCount: number }
+  | {
+      type: 'CORE_GRANTED';
+      skill: 'MULTI_LAUNCH' | 'TRIPLE_SPLIT';
+      total: number;
+      /** 核心砖被击碎的位置（逻辑坐标），供渲染层播放充能粒子。 */
+      x: number;
+      y: number;
+    }
+  | { type: 'PRECISE_CATCH'; offsetRatio: number; feverEnergy: number }
+  | { type: 'FEVER_ACTIVATED'; durationSec: number }
+  | { type: 'FEVER_ENDED' };
 
 /** 事件类型名联合，便于消费方做 switch 穷尽检查。 */
 export type GameEventType = GameEvent['type'];
+
+/**
+ * Fever 暴走状态快照（Milestone 5 / Step 2）。
+ *
+ * 渲染层、HUD 层与微信无 DOM 运行时共用同一份只读状态，
+ * 保证 Web 版与微信版的 Fever 表现完全一致。
+ */
+export interface FeverSnapshot {
+  /** 当前 Fever 能量（0 ~ `FEVER_ENERGY_MAX`）。 */
+  energy: number;
+  /** Fever 能量上限。 */
+  maxEnergy: number;
+  /** Fever 是否处于暴走中。 */
+  active: boolean;
+  /** Fever 剩余时长（秒）；未激活时为 0。 */
+  remainingSec: number;
+  /** Fever 持续时长（秒）。 */
+  durationSec: number;
+  /** Fever 期间的伤害倍率（未激活时为 1）。 */
+  damageMultiplier: number;
+}
 
 /* ------------------------------------------------------------------ */
 /* 几何与瞄准                                                          */

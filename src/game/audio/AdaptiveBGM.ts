@@ -26,6 +26,12 @@ const SCHEDULE_AHEAD_SEC = 0.12;
 /** Layer3 淡入淡出平滑时间常数。 */
 const LAYER3_FADE_TAU = 0.6;
 const LAYER3_PEAK = 0.32;
+/** Milestone 5 / Step 2：Fever 层（Layer4）峰值与淡入时间常数。 */
+const LAYER4_PEAK = 0.24;
+const LAYER4_FADE_TAU = 0.25;
+/** Fever 期间 Pad 低通截止频率（常态 820Hz）。 */
+const PAD_CUTOFF_NORMAL_HZ = 820;
+const PAD_CUTOFF_FEVER_HZ = 1650;
 
 /**
  * 和弦进行（每 2 小节换一次，A 小调家族）：
@@ -51,6 +57,8 @@ export class AdaptiveBGM {
   private readonly layer1Gain: GainNode;
   private readonly layer2Gain: GainNode;
   private readonly layer3Gain: GainNode;
+  /** Milestone 5 / Step 2：Fever 暴走驱动层（Layer4）。 */
+  private readonly layer4Gain: GainNode;
   private readonly padFilter: BiquadFilterNode;
   private readonly noiseBuffer: AudioBuffer;
 
@@ -58,6 +66,8 @@ export class AdaptiveBGM {
   private currentStep = 0;
   private nextNoteTime = 0;
   private layer3TargetOn = false;
+  /** Milestone 5 / Step 2：Fever 是否处于激活态。 */
+  private feverActive = false;
 
   constructor(limiter: AudioLimiter) {
     this.limiter = limiter;
@@ -69,16 +79,19 @@ export class AdaptiveBGM {
     this.layer2Gain.gain.value = 0.32;
     this.layer3Gain = ctx.createGain();
     this.layer3Gain.gain.value = 0; // 默认静音，高潮时淡入
+    this.layer4Gain = ctx.createGain();
+    this.layer4Gain.gain.value = 0; // 默认静音，Fever 时淡入
 
     this.padFilter = ctx.createBiquadFilter();
     this.padFilter.type = 'lowpass';
-    this.padFilter.frequency.value = 820;
+    this.padFilter.frequency.value = PAD_CUTOFF_NORMAL_HZ;
     this.padFilter.Q.value = 0.7;
 
     this.layer1Gain.connect(limiter.input);
     this.layer2Gain.connect(this.padFilter);
     this.padFilter.connect(limiter.input);
     this.layer3Gain.connect(limiter.input);
+    this.layer4Gain.connect(limiter.input);
 
     this.noiseBuffer = this.buildNoiseBuffer(ctx);
   }
@@ -115,6 +128,35 @@ export class AdaptiveBGM {
       now,
       LAYER3_FADE_TAU,
     );
+  }
+
+  /**
+   * Milestone 5 / Step 2：Fever 暴走开关。
+   *
+   * 激活时淡入 Layer4 驱动层（八分音符高八度脉冲），
+   * 同时把 Pad 低通截止频率从 820Hz 提到 1650Hz 让铺底更亮。
+   */
+  setFever(active: boolean): void {
+    if (active === this.feverActive) return;
+    this.feverActive = active;
+    const now = this.limiter.ctx.currentTime;
+    this.layer4Gain.gain.cancelScheduledValues(now);
+    this.layer4Gain.gain.setTargetAtTime(
+      active ? LAYER4_PEAK : 0,
+      now,
+      LAYER4_FADE_TAU,
+    );
+    this.padFilter.frequency.cancelScheduledValues(now);
+    this.padFilter.frequency.setTargetAtTime(
+      active ? PAD_CUTOFF_FEVER_HZ : PAD_CUTOFF_NORMAL_HZ,
+      now,
+      LAYER4_FADE_TAU,
+    );
+  }
+
+  /** Fever 是否处于激活态（只读）。 */
+  get isFeverActive(): boolean {
+    return this.feverActive;
   }
 
   /** 主循环每帧驱动：把前瞻窗口内的 16 分音符全部预排。 */
@@ -154,6 +196,32 @@ export class AdaptiveBGM {
     const arpIndex = ARP_PATTERN[stepInBar % ARP_PATTERN.length]!;
     const semitone = CHORD_INTERVALS[chordIndex]![arpIndex]! + 12; // 高八度
     this.scheduleArp(root * midiRatio(semitone), when);
+
+    // Layer 4（Fever）：八分音符高八度方波脉冲，制造暴走律动
+    if (this.feverActive && stepInBar % 2 === 1) {
+      this.scheduleFeverDrive(root * midiRatio(24), when);
+    }
+  }
+
+  /** Fever 驱动音：方波短脉冲（高八度根音）。 */
+  private scheduleFeverDrive(freq: number, when: number): void {
+    const ctx = this.limiter.ctx;
+    const osc = ctx.createOscillator();
+    osc.type = 'square';
+    osc.frequency.value = freq;
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 2600;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0, when);
+    gain.gain.linearRampToValueAtTime(0.3, when + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.001, when + 0.12);
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(this.layer4Gain);
+    osc.start(when);
+    osc.stop(when + 0.15);
+    this.autoDisconnect(osc, filter, gain);
   }
 
   /** 温暖深沉的脉冲 Bass：sawtooth + 低通 + 短包络。 */

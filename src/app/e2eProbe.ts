@@ -58,6 +58,18 @@ export interface E2ETestState {
    * E2E 用它把指针点到该砖上，即可让首发球沿最直接的路径命中它。
    */
   aimTarget: { x: number; y: number } | null;
+  /**
+   * Milestone 5 / Step 2：Fever 能量与暴走状态（只读）。
+   *
+   * `energy` 为 0~`maxEnergy`；`active` 为 true 时表示暴走进行中，
+   * 此时全场球获得穿透 + 2× 伤害倍率。
+   */
+  fever: {
+    energy: number;
+    maxEnergy: number;
+    active: boolean;
+    remainingSec: number;
+  };
 }
 
 /** 探针 API。 */
@@ -110,6 +122,7 @@ export function installE2EProbe(host: E2EProbeHost): E2ETestApi | null {
       const engine = host.getEngine();
       const inventory = engine.skillInventory;
       const counters = host.getDebugCounters();
+      const fever = engine.feverSnapshot;
       const balls: Array<{ x: number; y: number; vx: number; vy: number }> = [];
       for (const ball of host.getBalls()) {
         if (!ball.active) continue;
@@ -139,6 +152,12 @@ export function installE2EProbe(host: E2EProbeHost): E2ETestApi | null {
         paddleTargetX: engine.paddle.targetX,
         balls,
         aimTarget,
+        fever: {
+          energy: fever.energy,
+          maxEnergy: fever.maxEnergy,
+          active: fever.active,
+          remainingSec: fever.remainingSec,
+        },
       };
     },
 

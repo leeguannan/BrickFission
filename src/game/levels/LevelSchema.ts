@@ -132,6 +132,19 @@ const DYNAMIC_SYMBOL_POOL = (() => {
   return pool;
 })();
 
+/**
+ * Milestone 5 / Step 2 特殊砖角色（炸弹 / 棱镜 / 核心）。
+ *
+ * 这三种角色在 V1 的 Schema 中已预留符号（M / L / K），
+ * 本常量用于统一表达"特殊砖"语义（校验、Studio 笔刷、演示关卡）。
+ */
+export const SPECIAL_BRICK_ROLES: readonly BrickRole[] = ['BOMB', 'PRISM', 'CORE'];
+
+/** 是否为 Step 2 特殊砖角色。 */
+export function isSpecialRole(role: BrickRole): boolean {
+  return role === 'BOMB' || role === 'PRISM' || role === 'CORE';
+}
+
 /** 颜色字符串归一化（小写、去空白），失败返回空串。 */
 export function normalizeHexColor(color: string): string {
   if (typeof color !== 'string') return '';
@@ -494,6 +507,10 @@ export function validateDefinition(def: LevelDefinition): DefinitionValidation {
       seenKeys.add(key);
       if (entry.role === 'STEEL' && entry.hp !== 9999) {
         warnings.push(`符号 "${symbol}" 为 STEEL 但 hp=${entry.hp}，解码时会强制为 9999`);
+      }
+      // Milestone 5 / Step 2：特殊砖（炸弹 / 棱镜 / 核心）血量必须为正整数。
+      if (isSpecialRole(entry.role) && (!Number.isFinite(entry.hp) || entry.hp < 1)) {
+        errors.push(`符号 "${symbol}" 为特殊砖 ${entry.role}，hp 必须为 >= 1 的整数`);
       }
     }
   }

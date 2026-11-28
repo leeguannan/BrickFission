@@ -15,7 +15,7 @@ export const BRICK_HIT_COOLDOWN_MS = 45;
 export const WALL_HIT_COOLDOWN_MS = 70;
 
 /** 冷却分组（同组共享最小间隔）。 */
-export type SoundKind = 'brick' | 'wall' | 'paddle' | 'skill' | 'stinger';
+export type SoundKind = 'brick' | 'wall' | 'paddle' | 'skill' | 'stinger' | 'bomb' | 'prism' | 'core' | 'fever';
 
 const COOLDOWN_MS: Readonly<Record<SoundKind, number>> = {
   brick: BRICK_HIT_COOLDOWN_MS,
@@ -23,6 +23,11 @@ const COOLDOWN_MS: Readonly<Record<SoundKind, number>> = {
   paddle: WALL_HIT_COOLDOWN_MS,
   skill: 60,
   stinger: 80,
+  // Milestone 5 / Step 2：特殊砖与 Fever 独立冷却组，避免抢占既有音色门限
+  bomb: 70,
+  prism: 60,
+  core: 80,
+  fever: 150,
 };
 
 const NORMAL_LOWPASS_HZ = 20000;
@@ -44,6 +49,10 @@ export class AudioLimiter {
     paddle: -Infinity,
     skill: -Infinity,
     stinger: -Infinity,
+    bomb: -Infinity,
+    prism: -Infinity,
+    core: -Infinity,
+    fever: -Infinity,
   };
   private muted = false;
   private paused = false;

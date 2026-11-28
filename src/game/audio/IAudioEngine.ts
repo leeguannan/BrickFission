@@ -34,6 +34,23 @@ export interface IAudioEngine {
   /** 失败（下行柔和衰减和弦）。 */
   playLose(): void;
 
+  /* ---------------- Milestone 5 / Step 2：特殊砖与 Fever ---------------- */
+
+  /** 炸弹爆破（低频轰击 + 起爆瞬态）。 */
+  playBombExplosion(): void;
+  /** 棱镜折射（清脆高频三和弦）。 */
+  playPrismSplit(): void;
+  /** 核心充能（温暖上行双音）。 */
+  playCoreGrant(): void;
+  /** 精准接球（短促高频点音）。 */
+  playPreciseCatch(): void;
+  /** Fever 激活激励音（上行扫频 + 和弦）。 */
+  playFeverActivate(): void;
+  /** Fever 结束收束音。 */
+  playFeverEnd(): void;
+  /** Fever 状态切换（驱动 BGM Fever 层与 Pad 明暗）。 */
+  setFever(active: boolean): void;
+
   /** 每帧驱动（BGM lookahead 调度器）。 */
   update(dt: number): void;
   /** 释放全部音频资源。 */
@@ -54,6 +71,13 @@ export class NullAudioEngine implements IAudioEngine {
   playTripleSplit(): void {}
   playWin(): void {}
   playLose(): void {}
+  playBombExplosion(): void {}
+  playPrismSplit(): void {}
+  playCoreGrant(): void {}
+  playPreciseCatch(): void {}
+  playFeverActivate(): void {}
+  playFeverEnd(): void {}
+  setFever(_active: boolean): void {}
   update(_dt: number): void {}
   dispose(): void {}
 }

@@ -204,6 +204,201 @@ export class ProceduralSFX {
   }
 
   /* ---------------------------------------------------------------- */
+  /* Milestone 5 / Step 2：特殊砖与 Fever 专属音色                       */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * 炸弹爆破：低频下坠轰击 + 短促起爆瞬态。
+   * 走 `AudioLimiter` 的 'bomb' 冷却组，防炸音；整条链共用一个声部额度。
+   */
+  playBombExplosion(): void {
+    if (!this.limiter.tryAcquire('bomb')) return;
+    const ctx = this.limiter.ctx;
+    const now = ctx.currentTime;
+    const duration = 0.42;
+
+    const voice = ctx.createGain();
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 900;
+    voice.connect(filter);
+    filter.connect(this.limiter.input);
+    voice.gain.setValueAtTime(0.42, now);
+    voice.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
+    // 低频主体：140Hz → 42Hz 指数下坠
+    const body = ctx.createOscillator();
+    body.type = 'sine';
+    body.frequency.setValueAtTime(140, now);
+    body.frequency.exponentialRampToValueAtTime(42, now + duration * 0.9);
+    body.connect(voice);
+    body.start(now);
+    body.stop(now + duration + 0.02);
+
+    // 起爆头：短方波高频瞬态
+    const crack = ctx.createOscillator();
+    crack.type = 'square';
+    crack.frequency.setValueAtTime(900, now);
+    crack.frequency.exponentialRampToValueAtTime(180, now + 0.06);
+    const crackGain = ctx.createGain();
+    crackGain.gain.setValueAtTime(0.16, now);
+    crackGain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+    crack.connect(crackGain);
+    crackGain.connect(voice);
+    crack.start(now);
+    crack.stop(now + 0.09);
+
+    this.autoReleaseGroup([body, crack], voice, filter, crackGain);
+  }
+
+  /** 棱镜折射：清脆高频三和弦（1760 / 2349 / 3136 Hz），单个声部额度。 */
+  playPrismSplit(): void {
+    if (!this.limiter.tryAcquire('prism')) return;
+    const ctx = this.limiter.ctx;
+    const now = ctx.currentTime;
+    const chord = [1760, 2349.32, 3135.96];
+
+    const voice = ctx.createGain();
+    voice.connect(this.limiter.input);
+    voice.gain.setValueAtTime(0, now);
+    voice.gain.linearRampToValueAtTime(0.2, now + 0.006);
+    voice.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+
+    const oscs: OscillatorNode[] = [];
+    for (let i = 0; i < chord.length; i++) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = chord[i]!;
+      osc.connect(voice);
+      osc.start(now);
+      osc.stop(now + 0.31);
+      oscs.push(osc);
+    }
+    this.autoReleaseGroup(oscs, voice);
+  }
+
+  /** 核心充能：温暖上行双音（G4 → D5），单个声部额度。 */
+  playCoreGrant(): void {
+    if (!this.limiter.tryAcquire('core')) return;
+    const ctx = this.limiter.ctx;
+    const now = ctx.currentTime;
+
+    const voice = ctx.createGain();
+    voice.connect(this.limiter.input);
+    voice.gain.setValueAtTime(0.001, now);
+    voice.gain.linearRampToValueAtTime(0.2, now + 0.02);
+    voice.gain.exponentialRampToValueAtTime(0.001, now + 0.34);
+
+    const oscs: OscillatorNode[] = [];
+    const specs: Array<[number, number]> = [
+      [392.0, now],
+      [587.33, now + 0.09],
+    ];
+    for (const [freq, when] of specs) {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      const oscGain = ctx.createGain();
+      oscGain.gain.setValueAtTime(0, when);
+      oscGain.gain.linearRampToValueAtTime(1, when + 0.01);
+      osc.connect(oscGain);
+      oscGain.connect(voice);
+      osc.start(when);
+      osc.stop(now + 0.36);
+      oscs.push(osc);
+    }
+    this.autoReleaseGroup(oscs, voice);
+  }
+
+  /** 精准接球：短促清脆高频点音（不占用既有 paddle 冷却组）。 */
+  playPreciseCatch(): void {
+    if (!this.limiter.tryAcquire('prism')) return;
+    const ctx = this.limiter.ctx;
+    this.pluck(2093, ctx.currentTime, 0.09, 'sine', 0.11);
+  }
+
+  /** Fever 激活：上行激励扫频 + 五声音阶叠加和弦（单个声部额度）。 */
+  playFeverActivate(): void {
+    if (!this.limiter.tryAcquire('fever')) return;
+    const ctx = this.limiter.ctx;
+    const now = ctx.currentTime;
+
+    const voice = ctx.createGain();
+    voice.connect(this.limiter.input);
+    voice.gain.setValueAtTime(0.001, now);
+    voice.gain.linearRampToValueAtTime(0.22, now + 0.06);
+    voice.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+
+    const oscs: OscillatorNode[] = [];
+
+    // 激励扫频
+    const sweep = ctx.createOscillator();
+    sweep.type = 'sawtooth';
+    sweep.frequency.setValueAtTime(220, now);
+    sweep.frequency.exponentialRampToValueAtTime(1760, now + 0.55);
+    const sweepGain = ctx.createGain();
+    sweepGain.gain.value = 0.5;
+    sweep.connect(sweepGain);
+    sweepGain.connect(voice);
+    sweep.start(now);
+    sweep.stop(now + 0.92);
+    oscs.push(sweep);
+
+    // 五声音阶叠加和弦
+    const chord = [PENTATONIC_FREQS[3]!, PENTATONIC_FREQS[5]!, PENTATONIC_FREQS[7]!];
+    for (let i = 0; i < chord.length; i++) {
+      const when = now + 0.05 + i * 0.06;
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = chord[i]!;
+      const oscGain = ctx.createGain();
+      oscGain.gain.setValueAtTime(0, when);
+      oscGain.gain.linearRampToValueAtTime(0.6, when + 0.012);
+      oscGain.gain.exponentialRampToValueAtTime(0.001, when + 0.4);
+      osc.connect(oscGain);
+      oscGain.connect(voice);
+      osc.start(when);
+      osc.stop(when + 0.42);
+      oscs.push(osc);
+    }
+    this.autoReleaseGroup(oscs, voice);
+  }
+
+  /** Fever 结束：柔和下行两音收束（单个声部额度）。 */
+  playFeverEnd(): void {
+    if (!this.limiter.tryAcquire('fever')) return;
+    const ctx = this.limiter.ctx;
+    const now = ctx.currentTime;
+
+    const voice = ctx.createGain();
+    voice.connect(this.limiter.input);
+    voice.gain.setValueAtTime(0.001, now);
+    voice.gain.linearRampToValueAtTime(0.14, now + 0.03);
+    voice.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+
+    const oscs: OscillatorNode[] = [];
+    const specs: Array<[number, number]> = [
+      [880, now],
+      [523.25, now + 0.12],
+    ];
+    for (const [freq, when] of specs) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      const oscGain = ctx.createGain();
+      oscGain.gain.setValueAtTime(0, when);
+      oscGain.gain.linearRampToValueAtTime(1, when + 0.012);
+      oscGain.gain.exponentialRampToValueAtTime(0.001, when + 0.36);
+      osc.connect(oscGain);
+      oscGain.connect(voice);
+      osc.start(when);
+      osc.stop(when + 0.38);
+      oscs.push(osc);
+    }
+    this.autoReleaseGroup(oscs, voice);
+  }
+
+  /* ---------------------------------------------------------------- */
   /* 内部工具                                                          */
   /* ---------------------------------------------------------------- */
 
@@ -251,5 +446,39 @@ export class ProceduralSFX {
         /* 已断开则忽略 */
       }
     };
+  }
+
+  /**
+   * 多振荡器共享单一限流器声部额度时使用：
+   * 只有最后一个振荡器停止时才归还额度并断开整条节点链，
+   * 避免「一次 acquire、多次 release」导致限流器计数漂移。
+   */
+  private autoReleaseGroup(oscs: OscillatorNode[], ...nodes: AudioNode[]): void {
+    let remaining = oscs.length;
+    if (remaining === 0) {
+      this.limiter.release();
+      return;
+    }
+    for (const osc of oscs) {
+      osc.onended = () => {
+        remaining--;
+        if (remaining > 0) return;
+        this.limiter.release();
+        for (const node of nodes) {
+          try {
+            node.disconnect();
+          } catch {
+            /* 已断开则忽略 */
+          }
+        }
+        for (const other of oscs) {
+          try {
+            other.disconnect();
+          } catch {
+            /* 已断开则忽略 */
+          }
+        }
+      };
+    }
   }
 }

@@ -145,6 +145,34 @@ export class WebAudioEngine implements IAudioEngine {
     this.sfx?.playLose();
   }
 
+  playBombExplosion(): void {
+    this.sfx?.playBombExplosion();
+  }
+
+  playPrismSplit(): void {
+    this.sfx?.playPrismSplit();
+  }
+
+  playCoreGrant(): void {
+    this.sfx?.playCoreGrant();
+  }
+
+  playPreciseCatch(): void {
+    this.sfx?.playPreciseCatch();
+  }
+
+  playFeverActivate(): void {
+    this.sfx?.playFeverActivate();
+  }
+
+  playFeverEnd(): void {
+    this.sfx?.playFeverEnd();
+  }
+
+  setFever(active: boolean): void {
+    this.bgm?.setFever(active);
+  }
+
   update(_dt: number): void {
     this.bgm?.update();
   }

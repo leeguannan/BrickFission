@@ -20,14 +20,17 @@ import {
 import {
   serializeDefinition,
   toRuntimeConfig,
+  decodeRLE,
   type LevelDefinition,
 } from '../game/levels/LevelSchema.js';
+import { STEP2_DEMO_LEVEL } from '../game/levels/step2DemoLevel.js';
 import { scoreLevel, type ScoreResult } from '../game/levels/DifficultyScorer.js';
 import { rasterizeImageFileToBinary, rasterizeTextToBinary } from './imageRasterize.js';
 import {
   clearGrid,
   countTiles,
   createStudioState,
+  createStudioStateFromCells,
   paintAt,
   toDefinition,
   type MirrorMode,
@@ -141,6 +144,9 @@ export class StudioController {
       ['NORMAL', '普通砖'],
       ['STEEL', '钢墙'],
       ['ERASE', '橡皮'],
+      ['BOMB', '炸弹'],
+      ['PRISM', '棱镜'],
+      ['CORE', '核心'],
     ] as Array<[StudioTool, string]>) {
       const btn = el('button', 'studio-btn studio-tool') as HTMLButtonElement;
       btn.dataset.tool = tool[0];
@@ -217,6 +223,7 @@ export class StudioController {
     }));
     actionRow.appendChild(actionButton('一键试玩', () => this.play()));
     actionRow.appendChild(actionButton('导出 JSON', () => this.exportJson()));
+    actionRow.appendChild(actionButton('载入 Step2 演示关', () => this.loadStep2Demo()));
     controls.appendChild(actionRow);
 
     this.tileCounter = el('div', 'studio-counter');
@@ -388,6 +395,18 @@ export class StudioController {
     }
   }
 
+  /** 载入 Step 2 特殊砖演示关（炸弹 / 棱镜 / 核心），用于快速体验与教学。 */
+  private loadStep2Demo(): void {
+    const def = STEP2_DEMO_LEVEL;
+    const { cells } = decodeRLE(def.rleGrid, def.cols, def.rows, def.palette);
+    const next = createStudioStateFromCells(def.cols, def.rows, cells);
+    next.mirror = this.state.mirror;
+    this.state = next;
+    this.redraw();
+    this.updateCounter();
+    this.flashMessage('已载入 Step 2 特殊砖演示关');
+  }
+
   private exportJson(): void {
     try {
       const def = toDefinition(this.state, STUDIO_LEVEL_ID, STUDIO_LEVEL_NAME, DEFAULT_MECHANICS);
@@ -439,15 +458,25 @@ export class StudioController {
       for (let c = 0; c < cols; c++) {
         const cell = cells[r * cols + c]!;
         if (cell.role === 'EMPTY') continue;
+        const x = c * CELL_PX + 1;
+        const y = r * CELL_PX + 1;
+        const size = CELL_PX - 2;
         if (cell.role === 'STEEL') {
           ctx.fillStyle = '#7d8594';
+          ctx.fillRect(x, y, size, size);
+        } else if (cell.role === 'BOMB' || cell.role === 'PRISM' || cell.role === 'CORE') {
+          // 特殊砖：与普通砖靠「底色 + 徽记」区分，不靠纯色。
+          ctx.fillStyle = SPECIAL_BRICK_STUDIO_FILL[cell.role];
+          ctx.fillRect(x, y, size, size);
+          ctx.fillStyle = SPECIAL_BRICK_STUDIO_MARK[cell.role];
+          drawSpecialGlyph(ctx, cell.role, x, y, size);
         } else {
           ctx.fillStyle = DEFAULT_BRICK_COLORS[cell.colorIndex] ?? DEFAULT_BRICK_COLORS[0]!;
+          ctx.fillRect(x, y, size, size);
         }
-        ctx.fillRect(c * CELL_PX + 1, r * CELL_PX + 1, CELL_PX - 2, CELL_PX - 2);
         if (cell.maxHp > 1) {
           ctx.fillStyle = 'rgba(0,0,0,0.35)';
-          ctx.fillRect(c * CELL_PX + 2, r * CELL_PX + CELL_PX - 4, (CELL_PX - 4) * (cell.hp / cell.maxHp), 2);
+          ctx.fillRect(x + 1, y + size - 3, (size - 2) * (cell.hp / cell.maxHp), 2);
         }
       }
     }
@@ -469,6 +498,50 @@ export class StudioController {
 }
 
 /* ---------------- DOM 小工具（集中管理，禁 innerHTML 注入业务字符串） ---------------- */
+
+/** 特殊砖在工作台里的底色（与游戏内贴图徽记风格呼应）。 */
+const SPECIAL_BRICK_STUDIO_FILL: Record<'BOMB' | 'PRISM' | 'CORE', string> = {
+  BOMB: '#1b1b2f',
+  PRISM: '#123a4d',
+  CORE: '#5a3a05',
+};
+
+/** 特殊砖徽记颜色。 */
+const SPECIAL_BRICK_STUDIO_MARK: Record<'BOMB' | 'PRISM' | 'CORE', string> = {
+  BOMB: '#ff6b3d',
+  PRISM: '#7dd3fc',
+  CORE: '#f59e0b',
+};
+
+/** 绘制特殊砖徽记（炸弹引信点 / 棱镜三角 / 核心方环）。 */
+function drawSpecialGlyph(
+  ctx: CanvasRenderingContext2D,
+  role: 'BOMB' | 'PRISM' | 'CORE',
+  x: number,
+  y: number,
+  size: number,
+): void {
+  const cx = x + size * 0.5;
+  const cy = y + size * 0.5;
+  if (role === 'BOMB') {
+    ctx.fillRect(cx - 1.5, y + size * 0.18, 3, 3);
+    ctx.fillRect(cx - 0.5, cy - 1, 1, size * 0.55);
+    return;
+  }
+  if (role === 'PRISM') {
+    ctx.beginPath();
+    ctx.moveTo(cx, y + size * 0.2);
+    ctx.lineTo(x + size * 0.78, y + size * 0.78);
+    ctx.lineTo(x + size * 0.22, y + size * 0.78);
+    ctx.closePath();
+    ctx.fill();
+    return;
+  }
+  ctx.fillStyle = SPECIAL_BRICK_STUDIO_MARK[role];
+  ctx.fillRect(cx - size * 0.26, cy - size * 0.26, size * 0.52, size * 0.52);
+  ctx.fillStyle = SPECIAL_BRICK_STUDIO_FILL[role];
+  ctx.fillRect(cx - size * 0.12, cy - size * 0.12, size * 0.24, size * 0.24);
+}
 
 function el(tag: string, className: string): HTMLElement {
   const node = document.createElement(tag);

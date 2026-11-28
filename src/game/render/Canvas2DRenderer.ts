@@ -71,6 +71,24 @@ const BRICK_PALETTE: readonly BrickPaint[] = [
 ];
 const STEEL_PAINT: BrickPaint = { fill: '#7d8594', highlight: '#9aa3b2' };
 
+/**
+ * Milestone 5 / Step 2：特殊砖配色。
+ *
+ * 三种特殊砖除底色外**必须**带清晰图形徽记（炸弹引信 / 棱镜三角 / 核心方环），
+ * 避免仅靠颜色区分（docs/02 高对比度要求）。
+ * 徽记一律用 `fillRect` 像素块绘制，主循环链路（增量重绘）零路径 / 零 arc。
+ */
+const SPECIAL_BRICK_PAINT: Readonly<Record<'BOMB' | 'PRISM' | 'CORE', BrickPaint>> = {
+  BOMB: { fill: '#232338', highlight: '#ff6b3d' },
+  PRISM: { fill: '#0d3a52', highlight: '#7dd3fc' },
+  CORE: { fill: '#5a3a05', highlight: '#f59e0b' },
+};
+
+/** Fever 拖尾最多渲染的球数（上限保护，避免 200 球满池时 blit 爆炸）。 */
+const FEVER_TRAIL_MAX_BALLS = 48;
+/** Fever 拖尾采样间距（逻辑像素）。 */
+const FEVER_TRAIL_STEP = 8;
+
 /** 调试计数（docs/02 §4.1 离屏画布真缓存验证）。 */
 export interface RendererDebugCounters {
   /** 累计渲染帧数。 */
@@ -112,6 +130,13 @@ export class Canvas2DRenderer implements IRenderer {
   private ballWhiteSprite: AnyCanvas | null = null;
   private ballOverloadSprite: AnyCanvas | null = null;
   private aimDotSprite: AnyCanvas | null = null;
+  /** Milestone 5 / Step 2：Fever 高能球 / 拖尾 / 四边光效贴图（预烘焙，运行期零渐变）。 */
+  private feverBallSprite: AnyCanvas | null = null;
+  private feverTrailSprite: AnyCanvas | null = null;
+  private feverEdgeTop: AnyCanvas | null = null;
+  private feverEdgeBottom: AnyCanvas | null = null;
+  private feverEdgeLeft: AnyCanvas | null = null;
+  private feverEdgeRight: AnyCanvas | null = null;
   private readonly paddleSprites = new Map<string, AnyCanvas>();
   private shardSprites: AnyCanvas[] = [];
 
@@ -180,6 +205,12 @@ export class Canvas2DRenderer implements IRenderer {
     this.ballWhiteSprite = null;
     this.ballOverloadSprite = null;
     this.aimDotSprite = null;
+    this.feverBallSprite = null;
+    this.feverTrailSprite = null;
+    this.feverEdgeTop = null;
+    this.feverEdgeBottom = null;
+    this.feverEdgeLeft = null;
+    this.feverEdgeRight = null;
     this.mainCtx = null;
     this.mainCanvas = null;
   }
@@ -195,6 +226,19 @@ export class Canvas2DRenderer implements IRenderer {
       Math.min(PARTICLES_PER_BRICK_MAX, count || PARTICLES_PER_BRICK_MIN),
     );
     this.particles.spawn(x, y, colorIndex, clamped);
+  }
+
+  /**
+   * Milestone 5 / Step 2：特效爆发粒子。
+   *
+   * 与 `spawnBrickParticles` 共用同一个定长对象池（零分配），
+   * 区别在于数量不再被 2~3 夹住，且颜色直接走预烘焙碎块索引。
+   */
+  spawnEffectBurst(x: number, y: number, colorIndex: number, count: number): void {
+    const maxIndex = Math.max(0, this.shardSprites.length - 1);
+    const index = Math.max(0, Math.min(maxIndex, Math.round(colorIndex)));
+    const n = Math.max(1, Math.min(24, Math.round(count)));
+    this.particles.spawn(x, y, index, n);
   }
 
   triggerScreenShake(intensity: number, durationMs: number): void {
@@ -248,6 +292,7 @@ export class Canvas2DRenderer implements IRenderer {
 
     this.drawAim(ctx, state);
     this.drawPaddle(ctx, state);
+    this.drawFeverFrame(ctx, state);
     this.drawBalls(ctx, state);
     this.drawParticles(ctx);
 
@@ -320,6 +365,31 @@ export class Canvas2DRenderer implements IRenderer {
       return;
     }
 
+    // Milestone 5 / Step 2：特殊砖（炸弹 / 棱镜 / 核心）独立底色 + 图形徽记。
+    if (cell.role === 'BOMB' || cell.role === 'PRISM' || cell.role === 'CORE') {
+      const paint = SPECIAL_BRICK_PAINT[cell.role];
+      ctx.fillStyle = paint.fill;
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = paint.highlight;
+      ctx.fillRect(x, y, w, 1.5);
+      ctx.fillRect(x, y, 1.5, h);
+      paintSpecialGlyph(ctx, cell.role, x, y, w, h);
+      // 多血特殊砖（核心 5 血）同样显示血量刻点
+      if (cell.maxHp > 1) {
+        ctx.fillStyle = 'rgba(8,16,46,0.75)';
+        const dot = 2;
+        const gap = 1.5;
+        const total = cell.maxHp * dot + (cell.maxHp - 1) * gap;
+        let dx = x + (w - total) * 0.5;
+        const dy = y + h - dot - 1.5;
+        for (let i = 0; i < cell.maxHp; i++) {
+          if (i < cell.hp) ctx.fillRect(dx, dy, dot, dot);
+          dx += dot + gap;
+        }
+      }
+      return;
+    }
+
     const paint = BRICK_PALETTE[cell.colorIndex] ?? BRICK_PALETTE[0]!;
     ctx.fillStyle = paint.fill;
     ctx.fillRect(x, y, w, h);
@@ -377,14 +447,73 @@ export class Canvas2DRenderer implements IRenderer {
     const overloaded = this.ballOverloadSprite;
     if (!white || !overloaded) return;
     const useOverload = state.damageMultiplier > 1;
-    const sprite = useOverload ? overloaded : white;
+    // Milestone 5 / Step 2：Fever 期间使用专属高能球贴图
+    const feverOn = state.fever?.active === true;
+    const sprite = feverOn
+      ? (this.feverBallSprite ?? (useOverload ? overloaded : white))
+      : (useOverload ? overloaded : white);
     const diameter = BALL_RADIUS * 2;
     const balls = state.balls;
+    const trail = this.feverTrailSprite;
+    let trailDrawn = 0;
     for (let i = 0; i < balls.length; i++) {
       const ball = balls[i]!;
       if (!ball.active) continue;
+      // Fever 拖尾：沿速度方向回溯两段，零分配（复用同一贴图 + globalAlpha）
+      if (feverOn && trail && trailDrawn < FEVER_TRAIL_MAX_BALLS) {
+        const speed = Math.hypot(ball.vx, ball.vy);
+        if (speed > 1) {
+          const ux = ball.vx / speed;
+          const uy = ball.vy / speed;
+          ctx.globalAlpha = 0.3;
+          this.blit(
+            ctx,
+            trail,
+            ball.x - ux * FEVER_TRAIL_STEP - ball.radius,
+            ball.y - uy * FEVER_TRAIL_STEP - ball.radius,
+            diameter * 2.2,
+            diameter * 2.2,
+          );
+          ctx.globalAlpha = 0.15;
+          this.blit(
+            ctx,
+            trail,
+            ball.x - ux * FEVER_TRAIL_STEP * 2 - ball.radius,
+            ball.y - uy * FEVER_TRAIL_STEP * 2 - ball.radius,
+            diameter * 1.8,
+            diameter * 1.8,
+          );
+          ctx.globalAlpha = 1;
+        }
+        trailDrawn++;
+      }
       this.blit(ctx, sprite, ball.x - ball.radius, ball.y - ball.radius, diameter, diameter);
     }
+  }
+
+  /**
+   * Milestone 5 / Step 2：Fever 边框光效。
+   *
+   * 4 条预烘焙边贴图各 1 次 blit，强度随剩余时间呼吸，运行期零渐变 / 零 arc。
+   */
+  private drawFeverFrame(ctx: DrawCtx, state: Readonly<GameSnapshot>): void {
+    const fever = state.fever;
+    if (!fever || !fever.active) return;
+    const top = this.feverEdgeTop;
+    const bottom = this.feverEdgeBottom;
+    const left = this.feverEdgeLeft;
+    const right = this.feverEdgeRight;
+    if (!top || !bottom || !left || !right) return;
+    const duration = Math.max(0.001, fever.durationSec);
+    // 剩余时间比例（1 → 0）+ 呼吸脉冲
+    const fade = Math.min(1, Math.max(0, fever.remainingSec / duration));
+    const pulse = 0.62 + 0.38 * Math.sin(fever.remainingSec * 11);
+    ctx.globalAlpha = Math.min(1, fade * pulse);
+    this.blit(ctx, top, 0, 0, LOGICAL_WIDTH, 26);
+    this.blit(ctx, bottom, 0, LOGICAL_HEIGHT - 26, LOGICAL_WIDTH, 26);
+    this.blit(ctx, left, 0, 0, 26, LOGICAL_HEIGHT);
+    this.blit(ctx, right, LOGICAL_WIDTH - 26, 0, 26, LOGICAL_HEIGHT);
+    ctx.globalAlpha = 1;
   }
 
   private drawParticles(ctx: DrawCtx): void {
@@ -410,10 +539,88 @@ export class Canvas2DRenderer implements IRenderer {
     this.aimDotSprite = this.bakeAimDotSprite();
     this.shardSprites = BRICK_PALETTE.map((paint) => this.bakeShardSprite(paint.fill, paint.highlight));
 
+    // Milestone 5 / Step 2：Fever 相关贴图一次性烘焙（运行期只允许 drawImage）
+    this.feverBallSprite = this.bakeFeverBallSprite();
+    this.feverTrailSprite = this.bakeFeverTrailSprite();
+    this.feverEdgeTop = this.bakeFeverEdge('top');
+    this.feverEdgeBottom = this.bakeFeverEdge('bottom');
+    this.feverEdgeLeft = this.bakeFeverEdge('left');
+    this.feverEdgeRight = this.bakeFeverEdge('right');
+
     this.paddleSprites.clear();
     for (const id of PADDLE_SKIN_IDS) {
       this.paddleSprites.set(id, this.bakePaddleSprite(id));
     }
+  }
+
+  /** Fever 高能球贴图（玫红 → 金橙渐变，烘焙期创建渐变）。 */
+  private bakeFeverBallSprite(): AnyCanvas {
+    const logicalDiameter = BALL_RADIUS * 2;
+    const size = Math.ceil(logicalDiameter * SPRITE_SCALE) + 4;
+    const canvas = this.adapter.createOffscreenCanvas(size, size);
+    const ctx = this.requireCtx(canvas);
+    const center = size * 0.5;
+    const radius = center - 2;
+    const glow = ctx.createRadialGradient(center, center, radius * 0.2, center, center, radius);
+    glow.addColorStop(0, '#ffffff');
+    glow.addColorStop(0.45, '#ffd7f0');
+    glow.addColorStop(0.75, '#ff4d9d');
+    glow.addColorStop(1, 'rgba(255,77,157,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(center, center, radius, 0, Math.PI * 2);
+    ctx.fill();
+    return canvas;
+  }
+
+  /** Fever 拖尾光斑贴图（柔和径向渐变，烘焙期一次创建）。 */
+  private bakeFeverTrailSprite(): AnyCanvas {
+    const logical = BALL_RADIUS * 3.2;
+    const size = Math.ceil(logical * SPRITE_SCALE);
+    const canvas = this.adapter.createOffscreenCanvas(size, size);
+    const ctx = this.requireCtx(canvas);
+    const center = size * 0.5;
+    const radius = center - 1;
+    const glow = ctx.createRadialGradient(center, center, 0, center, center, radius);
+    glow.addColorStop(0, 'rgba(255,120,190,0.85)');
+    glow.addColorStop(0.5, 'rgba(255,90,160,0.32)');
+    glow.addColorStop(1, 'rgba(255,77,157,0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(center, center, radius, 0, Math.PI * 2);
+    ctx.fill();
+    return canvas;
+  }
+
+  /** Fever 边框光效贴图（上下左右 4 条，运行期各 1 次 blit）。 */
+  private bakeFeverEdge(edge: 'top' | 'bottom' | 'left' | 'right'): AnyCanvas {
+    const thickness = 26;
+    const horizontal = edge === 'top' || edge === 'bottom';
+    // 渐变只沿"厚度方向"变化，因此垂直边只需烘焙 8px 高的色带、水平边只需 8px 宽的色带，
+    // 运行期拉伸到全长即可（避免分配 720×26 / 26×1280 的大画布，利于微信端内存）。
+    const band = 8 * SPRITE_SCALE;
+    const canvas = this.adapter.createOffscreenCanvas(
+      horizontal ? band : thickness * SPRITE_SCALE,
+      horizontal ? thickness * SPRITE_SCALE : band,
+    );
+    const ctx = this.requireCtx(canvas);
+    const w = canvas.width;
+    const h = canvas.height;
+    const gradient = horizontal
+      ? ctx.createLinearGradient(0, 0, 0, h)
+      : ctx.createLinearGradient(0, 0, w, 0);
+    if (edge === 'top' || edge === 'left') {
+      gradient.addColorStop(0, 'rgba(255,77,157,0.75)');
+      gradient.addColorStop(0.55, 'rgba(255,140,60,0.22)');
+      gradient.addColorStop(1, 'rgba(255,77,157,0)');
+    } else {
+      gradient.addColorStop(0, 'rgba(255,77,157,0)');
+      gradient.addColorStop(0.45, 'rgba(255,140,60,0.22)');
+      gradient.addColorStop(1, 'rgba(255,77,157,0.75)');
+    }
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, w, h);
+    return canvas;
   }
 
   private bakeBallSprite(overload: boolean): AnyCanvas {
@@ -574,4 +781,64 @@ export class Canvas2DRenderer implements IRenderer {
     this.shakeRemainingMs = Math.max(0, this.shakeRemainingMs - dt * 1000);
     if (this.shakeRemainingMs === 0) this.shakeIntensity = 0;
   }
+}
+
+/* -------------------------------------------------------------------- */
+/* 特殊砖徽记（仅在离屏砖块层调用，零路径 / 零 arc）                       */
+/* -------------------------------------------------------------------- */
+
+/**
+ * 绘制特殊砖图形徽记。
+ *
+ * - 炸弹：圆形轮廓 + 引信 + 火花点
+ * - 棱镜：阶梯三角
+ * - 核心：方环 + 实心核
+ *
+ * 全部用 `fillRect` 像素块拼装，避免 `arc` / 路径调用（铁律：主循环链路零 arc）。
+ */
+function paintSpecialGlyph(
+  ctx: DrawCtx,
+  role: 'BOMB' | 'PRISM' | 'CORE',
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+): void {
+  const t = Math.max(1, Math.round(Math.min(w, h) * 0.11));
+  if (role === 'BOMB') {
+    // 炸弹本体圆角方框
+    const bx = x + w * 0.26;
+    const by = y + h * 0.30;
+    const bw = w * 0.44;
+    const bh = h * 0.48;
+    ctx.fillRect(bx, by, bw, t);
+    ctx.fillRect(bx, by + bh - t, bw, t);
+    ctx.fillRect(bx, by, t, bh);
+    ctx.fillRect(bx + bw - t, by, t, bh);
+    // 引信 + 火花
+    ctx.fillRect(bx + bw - t, by - h * 0.16, t, h * 0.16);
+    ctx.fillRect(bx + bw - t, by - h * 0.24, t * 2, t * 2);
+    return;
+  }
+  if (role === 'PRISM') {
+    // 阶梯三角（4 层横条）
+    const barH = Math.max(1, h * 0.15);
+    const widths = [0.26, 0.5, 0.74, 0.96];
+    for (let i = 0; i < widths.length; i++) {
+      const bw = w * widths[i]!;
+      const by = y + h * 0.78 - barH * (i + 1);
+      ctx.fillRect(x + (w - bw) * 0.5, by, bw, barH);
+    }
+    return;
+  }
+  // 核心：方环 + 实心核
+  const ox = x + w * 0.24;
+  const oy = y + h * 0.24;
+  const ow = w * 0.52;
+  const oh = h * 0.52;
+  ctx.fillRect(ox, oy, ow, t);
+  ctx.fillRect(ox, oy + oh - t, ow, t);
+  ctx.fillRect(ox, oy, t, oh);
+  ctx.fillRect(ox + ow - t, oy, t, oh);
+  ctx.fillRect(x + w * 0.40, y + h * 0.40, w * 0.20, h * 0.20);
 }

@@ -109,6 +109,7 @@ src/
 | M2 | `src/game/render/`（离屏分层 + 精灵烘焙 + 对象池）、`src/game/audio/`（程序化音效 + 动态 BGM）、`src/game/platform/WebAdapter.ts`、`src/app/` 试玩壳层 | `80e997b` | 23 例渲染单测；浏览器可玩闭环；构建产物 76KB |
 | M3 | `src/game/levels/`（Schema / 三大生成器 / 难度评分器 / 20 关库）+ `src/studio/` Level Studio | `cee9b63` | 38 例关卡单测 + 11 例工作台单测；Studio 自动评分 34ms |
 | M4 | 商业化闭环（复活 / 技能补给 / 皮肤商店 / 金币 / 解锁持久化）、`src/game/platform/WechatAdapter.stub.ts`、安全区与 Banner 预留 | 见 §6 交付清单 | 35 例平台单测 + 13 例商业化内核单测；`npm run lint` 零报错；`npm run build` 成功；满池压测平均 0.011ms/帧 |
+| M5 | Step 2 微策略爆破：BOMB / PRISM / CORE 三种特殊砖 + 精准接球 Fever 暴走 + 渲染/音频/HUD 呈现 + Studio 新笔刷 | 见 §7 | 新增 44 例单测（总计 242 例）；`npm run test:bot` **17/20 + 最低破砖率 70.2%**，第 04/10/17/18/19/20 关与基线**逐帧一致** |
 
 ### 5.1 已知文档口径差（提交前如实标注）
 
@@ -273,3 +274,78 @@ src/
 3. 放宽判据至「17/20 通关 + 无 NaN/LOST」并接受 06/07/09 三关为人工回归项。
 
 → **2026-11-28 架构师拍板：选 ③**，① 与 ② 均不采用。
+
+---
+
+## 7. Milestone 5（Step 2 微策略爆破）交付说明（2026-11-28）
+
+### 7.1 玩法机制
+
+| 机制 | 触发 | 效果 | 内核位置 |
+| :--- | :--- | :--- | :--- |
+| **BOMB 炸弹砖** | 砖块被击碎 | 以爆点为中心的 **3×3 邻域冲击波**（`BOMB_BLAST_RADIUS = 1`），对范围内可破坏砖造成 `BOMB_BLAST_DAMAGE = 1` 点伤害；相邻 BOMB **连环引爆**（递归深度上限 `BOMB_CHAIN_MAX_DEPTH = 6`，杜绝无限递归）；**钢墙 STEEL 永不被爆破破坏** | `GameEngine.explodeBomb()` / `onSpecialBrickDestroyed()` |
+| **PRISM 棱镜砖** | 砖块被击碎 | 按**入射方向**左右各偏 `PRISM_SPLIT_ANGLE_DEG = 16`° 分裂出 `PRISM_SPLIT_COUNT = 2` 颗折射子球；球池已满时溢出部分按既有规则转为伤害倍率（不无限刷爆球池） | `GameEngine.splitPrism()` |
+| **CORE 核心砖** | 砖块被击碎 | 立即发放 `CORE_SKILL_CHARGE = 1` 次随机技能充能（`SKILL_GRANTED`），并给场上每颗球附加 `CORE_PIERCE_COUNT = 1` 次**有限**穿透力 | `GameEngine.grantCoreBonus()` |
+| **精准接球 → Fever 暴走** | 挡板边缘命中（`\|PADDLE_HIT.offsetRatio\| ≥ PRECISE_CATCH_THRESHOLD = 0.65`）且为有效战斗回弹 | 累计 `FEVER_ENERGY_PER_CATCH = 10` 点能量（0~`FEVER_ENERGY_MAX = 100`）；满格自动进入 Fever 持续 `FEVER_DURATION_SEC = 6` 秒，期间伤害倍率 `FEVER_DAMAGE_MULTIPLIER = 2`（**只对已受损砖生效**，见 7.2）、连击计数翻倍 `FEVER_COMBO_BONUS = 2`；结束后能量清零重新积攒 | `GameEngine.onPaddleHit()` / `activateFever()` / `updateFever()` / `feverDamageMultiplier()` |
+
+穿透语义（`PhysicsEngine.advanceThroughBrick()`）：**不反弹 + 沿速度方向一次性推出砖块**。若仍做 push-out，球每子步都会被推回砖外、净位移为 0 会卡死；若完全不推出，球会卡在砖内被反复判定命中（多血砖瞬间被打空）。钢墙永不参与穿透：撞 STEEL 正常反弹且**不消耗**穿透次数。
+
+### 7.2 关键设计取舍：Fever 的「2× 伤害倍率」只对**已受损砖**生效
+
+需求原文是「所有球附加穿透**或** 2× 伤害倍率」，二选一即可。本实现选 **2× 伤害倍率** 分支，但把作用范围限定在**已受损的砖**（`cell.hp < cell.maxHp`），因此内置 20 关（只有 1 血与 2 血砖）的**破碎时序与基线逐帧一致**，守住了 V1 回归红线。
+
+四个候选方案的同种子 A/B 实测（`npm run test:bot`，第 18/19 关为千砖阵，第 20 关含大量 2 血砖）：
+
+| 方案 | 通关数 | 第 18 关 | 第 19 关 | 第 20 关 | 结论 |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| 基线 commit `15da5e5`（无 Step 2） | 17/20 | 141.4s / **100.0%** | 243s / **100.0%** | 166.3s / **100.0%** | 参照基准 |
+| ① Fever = **全场无限穿透**（初版） | **15/20** | 300s / **14.1%** | 300s / **12.0%** | — | 🔴 击穿门禁 |
+| ② Fever = **无条件 2× 伤害** | **13/20** | — | — | 68.8%（<70%）🔴 | 🔴 击穿门禁 |
+| ③ Fever = **2× 伤害（只对已受损砖）+ 连击翻倍**（定稿） | **17/20** | 141.4s / **100.0%** | 243s / **100.0%** | 166.3s / **100.0%** | ✅ 与基线逐帧一致 |
+
+**根因与代价（两条都不能省）**
+
+* 方案 ①：第 18 / 19 关是 **100% 单血砖 + 149 道钢墙**的千砖阵。全场穿透彻底改写球的轨迹模型（球不再在砖面反弹，而是直穿整片砖阵后飞出底线），机器人的反弹型瞄准模型随之失效，破砖率从 100% 崩到 14.1% / 12.0%。
+* 方案 ②：内置 20 关含 **6532 块 2 血砖**。无条件 2× 让 2 血砖「一击必碎」，**改变了破碎时机 → 改变轨迹**，实测第 20 关破砖率掉到 68.8%（门禁要求 ≥70%），通关数掉到 13/20。
+* 方案 ③（定稿）：伤害结算改为 `damage = isDamaged ? max(技能溢出倍率, Fever倍率) : 技能溢出倍率`。于是 **1 血砖一击必碎（2× 与 1× 等价）、2 血砖仍需两击（时序不变）、3 血及以上砖第 2 击即碎（真实收益）**；再叠加**连击翻倍**（`FEVER_COMBO_BONUS = 2`，连击是纯表现层数值，不参与任何物理判定）补足「暴走感」，实测与基线逐帧一致。
+
+> 由此新增 4 条**回归守卫单测**（`src/game/core/__tests__/step2_special_bricks.test.ts`）：Fever 对 1 血砖一击必碎 / 对 2 血砖仍需两击 / 对 3 血砖第 2 击即碎 / Fever 期间连击翻倍。任何后续改动若破坏其中任一条，`npm test` 立即失败。
+
+### 7.3 视听与 UI
+
+* `src/game/render/Canvas2DRenderer.ts`：预烘焙 BOMB / PRISM / CORE 矢量徽记（炸弹方框+引信 / 棱镜阶梯三角 / 核心方环+实心核，**全部用 `fillRect` 像素块拼装，零 `arc`、零路径**），并新增 Fever 球体贴图、拖尾光斑与 4 条边框光效贴图（渐变只沿厚度方向变化，按 8px 色带烘焙后拉伸到全长，避免分配大画布）。主循环保持零 `arc`、零临时渐变、零临时数组。
+* `src/game/audio/ProceduralSFX.ts`：新增爆破音 / 棱镜和弦 / 核心充能音 / 精准接球音 / Fever 激活与结束音，全部走 `AudioLimiter`（新增 `bomb`/`prism`/`core`/`fever` 声部与冷却）。和弦类音色统一做成**单 voice 多振荡器**（1 次 `tryAcquire` ↔ 1 次 `release`），避免限流器计数漂移。
+* `src/game/audio/AdaptiveBGM.ts`：新增 Layer 4（Fever 驱动层）+ Pad 低通切换（820Hz → 1650Hz），由 `setFever(active)` 淡入淡出。
+* `src/app/HudController.ts` + `src/app/styles.css` + `index.html`：新增顶部栏下方的 **Fever 能量进度条**（玫红→橙渐变，激活时金色描边发光）与「FEVER 暴走中」提示。
+
+### 7.4 关卡 Schema / 难度评分 / Level Studio
+
+* `src/game/levels/LevelSchema.ts`：`STANDARD_PALETTE` 已预置 `M` = BOMB(hp1) / `L` = PRISM(hp1) / `K` = CORE(hp5)，三者 `colorIndex` 回退为 0；RLE 编码/解码对三种特殊砖**无损往返**（新增 `SPECIAL_BRICK_ROLES`、`isSpecialRole()`，并在 `validateDefinition()` 中校验特殊砖 `hp ≥ 1`）。
+* `src/game/levels/DifficultyScorer.ts`：BOMB / PRISM / CORE 与普通砖同样计为**可破坏砖**，参与可达性 BFS 与静态/动态评分（行为本已正确，本次补注释固化口径）。
+* `src/studio/studioModel.ts` + `StudioController.ts` + `studio.css`：画笔面板新增「炸弹 / 棱镜 / 核心」三支笔刷（`StudioTool` 扩为 7 值，`SPECIAL_BRICK_HP` 与 `STANDARD_PALETTE` 血量一致），绘制时带独立底色与徽记；新增「载入 Step 2 演示关」按钮（`src/game/levels/step2DemoLevel.ts`，42×38 确定性布局，含三种特殊砖）。
+* **既有 20 关 `builtinLevelData` 字节级未改**：内置关卡只含 NORMAL / STEEL 两种砖（已用脚本核验：15167 块普通砖 + 6532 块 2 血砖 + 875 块钢墙，BOMB/PRISM/CORE 各 0 块），因此 Step 2 机制对 V1 回归**零干扰**。
+
+### 7.5 新增事件与快照（向后兼容）
+
+`GameEvent` 联合新增 6 个分支，既有成员一字未改：`BOMB_EXPLODED` / `PRISM_SPLIT` / `CORE_GRANTED` / `PRECISE_CATCH` / `FEVER_ACTIVATED` / `FEVER_ENDED`；新增只读快照 `FeverSnapshot{energy, maxEnergy, active, remainingSec, durationSec, damageMultiplier}`（`GameEngine.feverSnapshot`），Web HUD、e2e 探针与后续微信 Canvas HUD 共用同一份数据源。
+
+### 7.6 测试证据
+
+| 项目 | 数值 |
+| :--- | :--- |
+| 新增单测 | **44 例**（core 24 + levels 13 + studio 7） |
+| 单测总计 | **242 例全绿**（基线 198 例） |
+| `npm run lint` | 零报错（`tsc -p tsconfig.core.json --noEmit && tsc --noEmit`） |
+| `npm run bench` | 满池 199 球 / 3000 帧，平均 0.000ms、P95 0.000ms、最大 0.003ms、无 NaN |
+| `npm run test:bot` | **17/20 通关 + 全关破砖率 ≥70%**（最低破砖率 70.2% @ 第 09 关；第 04/10/17/18/19/20 关与基线**逐帧一致**：280.9s / 241.9s / 136.1s / 141.4s / 243s / 166.3s 全 100%） |
+| `npm run test:e2e` | 6 条链路全绿（新增 Step 2 状态探针链路） |
+| `npm run build` | `index.html` 3.99KB / CSS 10.42KB(gzip 2.99KB) / JS 160.88KB(gzip 48.21KB) |
+
+### 7.7 本轮踩坑记录（供后续复用）
+
+1. **子步推进不是 `dt` 无关的**：`engine.update(dt)` 每次只推进一个 `FIXED_DT`，测 Fever 计时必须循环调用。
+2. **自下而上的球会先撞到目标砖正下方那一格**：特殊砖测试必须把「正下方一格」留空，否则球永远打不到目标砖。
+3. **静止的填充球会打碎棱镜**：`splitPrism()` 对零速度直接返回，测试里必须把填充球叠放到空位而不是棱镜格上。
+4. **`toDefinition()` 会把维度夹到 `MIN_COLS=28` / `MIN_ROWS=24`**：10×8 的小网格导出会抛「格子数不足」，往返测试必须用 28×24。
+5. **「Fever 加伤害」是最容易击穿 V1 回归红线的改动**：机器人对砖块破碎时机高度敏感，1 血砖无害但 **2 血砖的破碎时机一变、轨迹就变**（内置 20 关有 6532 块 2 血砖）。凡是要改「伤害结算」的玩法，必须用同种子跑 `npm run test:bot` 做 A/B 回归，并补「时序守卫」单测。
+6. **`npm run test:bot | tail` 会掩盖失败退出码**：管道里 `tail` 的退出码会覆盖脚本退出码，回归门禁必须直接看脚本退出码或日志里的 `EXIT=` 行。

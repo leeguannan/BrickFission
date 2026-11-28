@@ -114,6 +114,43 @@
   box-shadow: 0 0 0 2px rgba(43, 127, 255, 0.25);
 }
 
+/* Milestone 5 / Step 2：特殊砖笔刷（炸弹 / 棱镜 / 核心）用各自色系区分 */
+.studio-tool[data-tool='BOMB'] {
+  border-color: rgba(255, 107, 61, 0.55);
+  background: rgba(255, 107, 61, 0.16);
+  color: #ffd9c9;
+}
+
+.studio-tool[data-tool='PRISM'] {
+  border-color: rgba(125, 211, 252, 0.55);
+  background: rgba(125, 211, 252, 0.16);
+  color: #d6f2ff;
+}
+
+.studio-tool[data-tool='CORE'] {
+  border-color: rgba(245, 158, 11, 0.55);
+  background: rgba(245, 158, 11, 0.16);
+  color: #ffe6b8;
+}
+
+.studio-tool[data-tool='BOMB'].is-active {
+  background: #ff6b3d;
+  border-color: #ffb59b;
+  box-shadow: 0 0 0 2px rgba(255, 107, 61, 0.3);
+}
+
+.studio-tool[data-tool='PRISM'].is-active {
+  background: #38bdf8;
+  border-color: #b6e8ff;
+  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.3);
+}
+
+.studio-tool[data-tool='CORE'].is-active {
+  background: #f59e0b;
+  border-color: #ffd88a;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.32);
+}
+
 .studio-actions {
   margin-top: 6px;
 }

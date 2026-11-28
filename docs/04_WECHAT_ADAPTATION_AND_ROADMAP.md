@@ -87,7 +87,7 @@ V1 虽以轻量耐玩为主，但必须跑通以下核心循环（Web 版即可�
 | 演进阶段 | 核心独特性玩法 | 在 V1 代码中的预留钩子（MiniMax 需保留的扩展点） |
 | :--- | :--- | :--- |
 | **Step 1（当前 V1）** | 极致力学手感 + 双技能 + 音阶解压 + 自动化关卡工具 | 确定性 `GameEngine`、`IRenderer`、`LevelDefinition`、程序化音频 |
-| **Step 2（微策略爆破）** | 1. 炸弹/棱镜/引力微砖块<br>2. 挡板边缘“精准接球”积攒 Fever 激光球<br>3. 残局无人机自动扫尾 | `BrickRole` 已预留 `BOMB / PRISM / CORE`；`PADDLE_HIT` 事件已携带 `offsetRatio`；`ENDGAME_ASSIST` 已内置残局软追踪框架 |
+| **Step 2（微策略爆破）**<br>✅ **已于 Milestone 5 交付** | 1. 炸弹/棱镜/引力微砖块<br>2. 挡板边缘“精准接球”积攒 Fever 激光球<br>3. 残局无人机自动扫尾 | `BrickRole` 的 `BOMB / PRISM / CORE` 已落地（BOMB 3×3 冲击波 + 连环引爆且不炸钢墙、PRISM 折射分裂、CORE 技能充能 + 有限穿透）；`PADDLE_HIT.offsetRatio` 已驱动精准接球与 Fever 暴走（**取 2× 伤害倍率分支，不做全场穿透**，理由见 `docs/00` §7.2）；`ENDGAME_ASSIST` 残局软追踪框架保持不变 |
 | **Step 3（轻肉鸽 + 动态关）** | 1. 局内“三选一”物理词条（火花/电弧/穿透/变大）<br>2. 动态旋转齿轮阵与像素 Boss | `Ball` 已预留 `pierceCount`；`GameEngine` 事件总线可随时监听进度百分比触发 `PAUSED -> PICK_BUFF`；`LevelMechanicsConfig` 已预留旋转与 Boss 字段 |
 | **Step 4（UGC 社交裂变）** | 1. **玩家拍照/输入文字 1 秒自制关卡**<br>2. **微信好友挑战卡片与同图竞速榜** | `LevelGenerators.fromImageOrText` 纯 TS 编写，**可直接运行在微信小游戏前端**；`PlayerSaveData.bestTimesSec` 与 `shareAppMessage(query)` 已为“战绩卡片带关卡种子分享”铺平道路 |
 
@@ -159,9 +159,9 @@ V1 虽以轻量耐玩为主，但必须跑通以下核心循环（Web 版即可�
 
 | 阶段 | 预埋钩子 | 实测位置 | 结论 |
 | :--- | :--- | :--- | :--- |
-| Step 2 | `BrickRole` 的 `BOMB / PRISM / CORE` | `src/game/core/types.ts` | ✅ 保留 |
-| Step 2 | `PADDLE_HIT` 携带 `offsetRatio` | `src/game/core/types.ts` + `PhysicsEngine.collidePaddle()` | ✅ 保留（并被音频边缘音与精准接球复用） |
-| Step 2 | `ENDGAME_ASSIST` 残局软追踪 | `GameEngine.updateEndgameAssist()` / `applySoftHoming()` | ✅ 保留 |
+| Step 2 | `BrickRole` 的 `BOMB / PRISM / CORE` | `src/game/core/types.ts` + `GameEngine.onSpecialBrickDestroyed()` / `explodeBomb()` / `splitPrism()` / `grantCoreBonus()` | ✅ **已落地（M5）**：三种特殊砖全部实装，配 20 例内核单测 |
+| Step 2 | `PADDLE_HIT` 携带 `offsetRatio` | `src/game/core/types.ts` + `PhysicsEngine.collidePaddle()` + `GameEngine.onPaddleHit()` | ✅ **已落地（M5）**：驱动精准接球与 Fever 暴走（音频边缘音同时复用） |
+| Step 2 | `ENDGAME_ASSIST` 残局软追踪 | `GameEngine.updateEndgameAssist()` / `applySoftHoming()` | ✅ 保留（行为未变） |
 | Step 3 | `Ball.pierceCount` | `src/game/core/types.ts` | ✅ 保留 |
 | Step 3 | 事件总线可触发 `PAUSED -> PICK_BUFF` | `GameEngine.pause()/resume()` + `drainEvents()` + `LevelRuntimeConfig` | ✅ 保留（`PICK_BUFF` 阶段由后续版本新增，钩子不改内核即可接入） |
 | Step 3 | `LevelMechanicsConfig` 旋转 / Boss 字段 | `src/game/levels/LevelSchema.ts`（`rotationSpeedDegPerSec` / `bossMode` / `roguePoolId`） | ✅ 保留 |
@@ -208,3 +208,27 @@ V1 虽以轻量耐玩为主，但必须跑通以下核心循环（Web 版即可�
 | 3 | `AdaptiveBGM` 临时节点不回收；`WebAudioEngine` 无法注入微信端 AudioContext | 四个调度函数统一绑定 `onended` 自动 `disconnect()` 整条节点链（对齐 `ProceduralSFX.autoRelease`）；新增 `contextFactory?: () => AudioContext` 注入位（微信端可传 `wx.createWebAudioContext`） | `npm run lint` + 171 例单测全绿 |
 | 4 | 结算看广告翻倍后弹窗不再出现；模拟广告样式类名失配（`.bf-reward-count` vs `.bf-reward-countdown`） | 抽出 `showWinModal(elapsedSec, baseCoins, doubled)`，翻倍完成后**重显只含「重开本关 / 下一关」**的结算窗并附翻倍提示；CSS 补 `.bf-reward-countdown` / `.bf-reward-skip`，广告标题补 `bf-reward-title` class | `npm run build` 成功 |
 | 5 | `HudController.setSkillCounts` / `setCoins` 每帧无条件写 DOM | 增加脏值缓存（`lastBlueCount` / `lastOrangeCount` / `lastCoins`），数值未变不触碰 DOM（与 `setPausedLabel` 同思路） | `npm run lint` 零报错 |
+
+---
+
+## 7. Milestone 5（Step 2 微策略爆破）落地记录（2026-11-28）
+
+> Step 2 的全部玩法逻辑都落在 `src/game/core/`（纯 TypeScript、零宿主 API），
+> 因此**天然可在微信小游戏运行时直接复用**，不需要为微信端另写一套物理。
+
+### 7.1 微信端可直接复用的部分
+
+| 能力 | 位置 | 微信侧说明 |
+| :--- | :--- | :--- |
+| BOMB / PRISM / CORE 三种特殊砖 | `GameEngine.onSpecialBrickDestroyed()` 及三个私有结算函数 | 纯逻辑，事件经 `drainEvents()` 上抛，微信 Canvas HUD 可直接按事件播粒子/震屏 |
+| 精准接球与 Fever 暴走 | `GameEngine.onPaddleHit()` / `feverSnapshot` | 只读快照 `FeverSnapshot` 供微信端画进度条，无需改动内核 |
+| 关卡 Schema 对特殊砖的支持 | `src/game/levels/LevelSchema.ts`（`M`/`L`/`K` 符号） | 纯 TS 编解码，微信端 `LevelGenerators` 可直接产出含特殊砖的关卡 |
+| 特殊砖难度评分 | `src/game/levels/DifficultyScorer.ts` | 特殊砖计入可破坏砖，与 Web 端同一套评分 |
+
+### 7.2 与微信打包链路（M6）的衔接点
+
+* `GameEvent` 新增 6 个分支（`BOMB_EXPLODED` / `PRISM_SPLIT` / `CORE_GRANTED` / `PRECISE_CATCH` / `FEVER_ACTIVATED` / `FEVER_ENDED`）为**联合类型的新增分支**，不改动既有成员，因此微信端的事件消费代码只需 `switch` 增加 case，不存在破坏性变更。
+* `FeverSnapshot` 由 `GameEngine.feverSnapshot` 统一提供，微信端 `CanvasHudRenderer` 与 Web 端 `HudController` 共用同一份数据，避免两端表现漂移。
+* Fever 取「2× 伤害倍率」分支（而非全场穿透）还有一个额外好处：**不会让球长时间直穿砖阵飞出底线**，微信端的「复活续关 / 技能补给」商业化触点不会被高频触发。
+* **Fever 的 2× 倍率只对「已受损砖」生效**（`cell.hp < cell.maxHp`）：1 血 / 2 血砖的破碎时序与基线一致，3 血及以上砖被加速击碎；连击计数在 Fever 期间翻倍（纯表现层，不影响物理）。实测 `npm run test:bot` 与基线**逐帧一致**（17/20、最低破砖率 70.2%），详见 `docs/00` §7.2。微信端沿用同一份 `GameEngine`，无任何额外分支。
+* **微信端 HUD 复用点**：`FeverSnapshot{energy, maxEnergy, active, remainingSec, durationSec, damageMultiplier}` 已被 `src/app/e2eProbe.ts` 暴露为只读状态，M6 的 `CanvasHudRenderer` 直接读同一份快照即可画能量条，不需要在微信端另算一套能量逻辑。

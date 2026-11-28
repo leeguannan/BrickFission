@@ -323,4 +323,33 @@ test.describe('碎砖大裂变 · 端到端', () => {
     expect(['READY_AIM', 'PLAYING']).toContain(state.phase);
     expect(state.totalBreakable).toBeGreaterThan(0);
   });
+
+  test('6. Step2 状态探针：Fever 只读状态可读、能量条常驻 DOM、特殊砖笔刷存在', async ({ page }) => {
+    const errors = await boot(page);
+
+    // Fever 只读状态（探针暴露，供验证用）
+    const state = await readState(page);
+    expect(state.fever.energy).toBe(0);
+    expect(state.fever.maxEnergy).toBe(100);
+    expect(state.fever.active).toBe(false);
+    expect(state.fever.remainingSec).toBe(0);
+
+    // Fever 能量条常驻 DOM（未激活时隐藏，激活时显示）
+    await expect(page.locator('#fever-bar')).toHaveCount(1);
+    await expect(page.locator('#fever-fill')).toHaveCount(1);
+    await expect(page.locator('#fever-bar')).not.toHaveClass(/visible/);
+
+    // Level Studio 新增三种特殊砖笔刷
+    await page.locator('#btn-studio').click();
+    await expect(page.locator('.studio-overlay')).toBeVisible();
+    await expect(page.locator('.studio-tool[data-tool="BOMB"]')).toHaveCount(1);
+    await expect(page.locator('.studio-tool[data-tool="PRISM"]')).toHaveCount(1);
+    await expect(page.locator('.studio-tool[data-tool="CORE"]')).toHaveCount(1);
+    // 演示关一键载入
+    await page.getByRole('button', { name: '载入 Step2 演示关' }).click();
+    await page.waitForTimeout(200);
+    await expect(page.locator('.studio-counter')).toContainText('可破坏砖');
+
+    expect(errors).toEqual([]);
+  });
 });

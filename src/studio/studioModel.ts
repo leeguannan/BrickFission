@@ -9,8 +9,23 @@ import { makeEmptyCell, makeNormalCell, makeSteelCell } from '../game/core/Brick
 import type { BrickCell } from '../game/core/types.js';
 import { definitionFromCells, type LevelDefinition, type LevelMechanicsConfig } from '../game/levels/LevelSchema.js';
 
-/** 笔刷工具：普通砖 / 钢墙 / 橡皮。 */
-export type StudioTool = 'NORMAL' | 'STEEL' | 'ERASE';
+/** 笔刷工具：普通砖 / 钢墙 / 橡皮 / 炸弹 / 棱镜 / 核心（Milestone 5 / Step 2）。 */
+export type StudioTool = 'NORMAL' | 'STEEL' | 'ERASE' | 'BOMB' | 'PRISM' | 'CORE';
+
+/** 特殊砖笔刷（Step 2）。 */
+export type StudioSpecialTool = 'BOMB' | 'PRISM' | 'CORE';
+
+/** 特殊砖的默认血量（与 `STANDARD_PALETTE` 的 M/L/K 保持一致，保证 RLE 无损往返）。 */
+export const SPECIAL_BRICK_HP: Readonly<Record<StudioSpecialTool, number>> = {
+  BOMB: 1,
+  PRISM: 1,
+  CORE: 5,
+};
+
+/** 是否为 Step 2 特殊砖笔刷。 */
+export function isSpecialTool(tool: StudioTool): tool is StudioSpecialTool {
+  return tool === 'BOMB' || tool === 'PRISM' || tool === 'CORE';
+}
 
 /** 镜像模式：不镜像 / 左右镜像 / 四象限镜像。 */
 export type MirrorMode = 'NONE' | 'HORIZONTAL' | 'QUAD';
@@ -95,6 +110,12 @@ export function paintAt(state: StudioState, col: number, row: number, tool: Stud
 function createBrushCell(state: StudioState, tool: StudioTool): BrickCell {
   if (tool === 'STEEL') return makeSteelCell();
   if (tool === 'ERASE') return makeEmptyCell();
+  if (isSpecialTool(tool)) {
+    // 特殊砖固定 colorIndex = 0，与 `STANDARD_PALETTE` 的 M/L/K 完全一致，
+    // 保证 definitionFromCells 能命中标准符号（RLE 无损往返）。
+    const hp = SPECIAL_BRICK_HP[tool];
+    return { role: tool, hp, maxHp: hp, colorIndex: 0 };
+  }
   const hp = Math.max(1, Math.min(4, Math.round(state.selectedHp)));
   const colorIndex = Math.max(0, Math.min(7, Math.round(state.selectedColorIndex)));
   return makeNormalCell(hp, colorIndex);

@@ -20,6 +20,7 @@ import {
   DEADLOCK_JITTER_DEG_MAX,
   DEADLOCK_JITTER_DEG_MIN,
   DEATH_LINE_Y,
+  FEVER_COMBO_BONUS,
   MAX_PHYSICAL_BALLS,
   MIN_VERTICAL_RATIO,
   MIN_VERTICAL_RATIO_ENFORCED,
@@ -49,6 +50,30 @@ export interface PhysicsWorld {
   onBrickDestroyed(col: number, row: number): void;
   /** 撞击墙面或挡板后的回调（残局软追踪用）。 */
   onBoundaryBounce(ball: Ball): void;
+  /**
+   * Fever 暴走的伤害倍率（Milestone 5 / Step 2）。
+   *
+   * 未开启 Fever 时必须返回 1（默认值）。物理层只把该倍率施加给
+   * **已受损的砖**，以保证 1 血 / 2 血砖的破碎时序与基线完全一致
+   * （详见 `constants.ts` 中 `FEVER_DAMAGE_MULTIPLIER` 的说明）。
+   */
+  feverDamageMultiplier?(): number;
+  /**
+   * 特殊砖（BOMB / PRISM / CORE）被击碎后的回调（Milestone 5 / Step 2）。
+   *
+   * 可选实现：未提供时特殊砖退化为「仅摧毁」的普通砖，行为向后兼容。
+   */
+  onSpecialBrickDestroyed?(
+    role: 'BOMB' | 'PRISM' | 'CORE',
+    col: number,
+    row: number,
+    x: number,
+    y: number,
+    vx: number,
+    vy: number,
+  ): void;
+  /** 挡板有效回弹回调（精准接球 / Fever 能量累计用）。 */
+  onPaddleHit?(offsetRatio: number): void;
 }
 
 /** 候选碰撞的复用对象（零 GC）。 */
@@ -294,35 +319,72 @@ export class PhysicsEngine {
       }
     }
 
+    // ---- 材质判定前置：先决定本次是「反弹」还是「穿透」 ----
+    const cell = best.cell;
+    /** 击碎前先记录角色（`grid.damage` 摧毁时会把角色改写为 EMPTY）。 */
+    const role = cell.role;
+    /** 球自身携带的穿透次数（由 CORE 砖击碎时授予）。 */
+    const hasPierce = ball.pierceCount > 0;
+    /** 钢墙永不参与穿透：撞 STEEL 仍正常反弹，且不消耗穿透次数。 */
+    const piercing = role !== 'STEEL' && hasPierce;
+    /**
+     * 击碎前的**入射方向**。
+     *
+     * 棱镜砖的折射子球要沿"来向"分叉（而不是反弹后的方向），
+     * 因此这里在反弹改写速度之前先把入射向量留存下来。
+     */
+    const inVx = ball.vx;
+    const inVy = ball.vy;
+
     // ---- 单次轴向反弹（避免同一角点连弹两次导致速度反转失效）----
-    if (best.axis === 'x') {
-      ball.vx = -ball.vx;
-    } else {
-      ball.vy = -ball.vy;
+    if (!piercing) {
+      if (best.axis === 'x') {
+        ball.vx = -ball.vx;
+      } else {
+        ball.vy = -ball.vy;
+      }
+
+      // ---- Push-out：沿分离轴推出完整穿透深度 ----
+      ball.x += best.nx * (best.depth + CONTACT_EPSILON);
+      ball.y += best.ny * (best.depth + CONTACT_EPSILON);
+
+      // ---- 其余重叠格只做位置修正，不再反弹（彻底脱离接触区）----
+      this.resolveRemainingOverlaps(ball, colMin, colMax, rowMin, rowMax, count);
     }
 
-    // ---- Push-out：沿分离轴推出完整穿透深度 ----
-    ball.x += best.nx * (best.depth + CONTACT_EPSILON);
-    ball.y += best.ny * (best.depth + CONTACT_EPSILON);
-
-    // ---- 其余重叠格只做位置修正，不再反弹（彻底脱离接触区）----
-    this.resolveRemainingOverlaps(ball, colMin, colMax, rowMin, rowMax, count);
-
     // ---- 材质结算 ----
-    const cell = best.cell;
-    if (cell.role === 'STEEL') {
+    if (role === 'STEEL') {
       // 灰墙：只反弹不扣血，不计 Combo，计入"久未破砖自救"计数。
       ball.bouncesSinceBrick++;
       this.world.emit({ type: 'WALL_HIT', x: ball.x, y: ball.y });
       this.applyDeadlockEscape(ball);
     } else {
-      const damage = this.world.damageMultiplier();
+      // 伤害结算：
+      //   · `baseDamage` = 技能溢出倍率（既有机制，语义不变）；
+      //   · `feverMultiplier` = Fever 暴走倍率，**只对已受损的砖生效**，
+      //     从而保证 1 血 / 2 血砖的破碎时序与基线逐帧一致（V1 回归红线）。
+      const baseDamage = this.world.damageMultiplier();
+      const feverMultiplier = this.world.feverDamageMultiplier?.() ?? 1;
+      const isDamaged = cell.maxHp > 0 && cell.hp < cell.maxHp;
+      const damage = isDamaged ? Math.max(baseDamage, feverMultiplier) : baseDamage;
       const result = grid.damage(best.col, best.row, damage);
       if (result.damaged) {
         if (result.destroyed) {
-          this.combo++;
+          // Fever 期间连击计数翻倍（连击是纯表现层数值，不参与物理判定）。
+          this.combo += feverMultiplier > 1 ? FEVER_COMBO_BONUS : 1;
           ball.bouncesSinceBrick = 0;
           this.world.onBrickDestroyed(best.col, best.row);
+          if (role === 'BOMB' || role === 'PRISM' || role === 'CORE') {
+            this.world.onSpecialBrickDestroyed?.(
+              role,
+              best.col,
+              best.row,
+              ball.x,
+              ball.y,
+              inVx,
+              inVy,
+            );
+          }
         }
         this.world.emit({
           type: 'BRICK_HIT',
@@ -335,10 +397,43 @@ export class PhysicsEngine {
           combo: this.combo,
         });
       }
+      if (piercing) {
+        // 穿透：消耗一次自身穿透次数（Fever 加成不消耗），并沿速度方向推出砖块，
+        // 避免同一子步内对同一格重复结算伤害。
+        if (hasPierce) ball.pierceCount -= 1;
+        this.advanceThroughBrick(ball, best.col, best.row);
+      }
     }
 
     this.applyMinimumVerticalComponent(ball);
     this.world.onBoundaryBounce(ball);
+  }
+
+  /**
+   * 穿透推进：沿当前速度方向把球推出目标砖块。
+   *
+   * 若不推进，球会一直卡在砖内被反复判定命中（多血砖会被瞬间打空），
+   * 因此这里按"球心离开砖块外扩边界"所需的最小距离推进一次。
+   */
+  private advanceThroughBrick(ball: Ball, col: number, row: number): void {
+    const speed = Math.hypot(ball.vx, ball.vy);
+    if (speed <= ANGLE_EPSILON) return;
+    const rect = this.world.grid.cellRect(col, row);
+    const r = ball.radius;
+    const ux = ball.vx / speed;
+    const uy = ball.vy / speed;
+
+    let tx = Number.POSITIVE_INFINITY;
+    let ty = Number.POSITIVE_INFINITY;
+    if (ux > 0) tx = (rect.x + rect.width + r - ball.x) / ux;
+    else if (ux < 0) tx = (rect.x - r - ball.x) / ux;
+    if (uy > 0) ty = (rect.y + rect.height + r - ball.y) / uy;
+    else if (uy < 0) ty = (rect.y - r - ball.y) / uy;
+
+    const t = Math.min(tx, ty);
+    if (!Number.isFinite(t) || t <= 0) return;
+    ball.x += ux * t;
+    ball.y += uy * t;
   }
 
   /**
@@ -477,6 +572,9 @@ export class PhysicsEngine {
     ball.bouncesSinceBrick = 0;
 
     this.world.emit({ type: 'PADDLE_HIT', x: ball.x, y: top, offsetRatio: offset });
+    // 精准接球 / Fever 能量累计（Milestone 5 / Step 2）。
+    // 这里的回弹一定是「向下击中挡板」的有效战斗回弹（上方已过滤 vy <= 0）。
+    this.world.onPaddleHit?.(offset);
     this.applyMinimumVerticalComponent(ball);
     this.world.onBoundaryBounce(ball);
   }

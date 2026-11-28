@@ -20,17 +20,29 @@ import {
   ANGLE_EPSILON,
   BASE_BALL_SPEED,
   BALL_RADIUS,
+  BOMB_BLAST_DAMAGE,
+  BOMB_BLAST_RADIUS,
+  BOMB_CHAIN_MAX_DEPTH,
+  CORE_PIERCE_COUNT,
+  CORE_SKILL_CHARGE,
   DEATH_LINE_Y,
   ENDGAME_HOMING_DEG,
   ENDGAME_IDLE_SEC,
   ENDGAME_REMAINING_COUNT,
   ENDGAME_REMAINING_RATIO,
+  FEVER_DAMAGE_MULTIPLIER,
+  FEVER_DURATION_SEC,
+  FEVER_ENERGY_MAX,
+  FEVER_ENERGY_PER_CATCH,
   FIXED_DT,
   PADDLE_CONTACT_GAP,
   PADDLE_FOLLOW_SPEED,
   PADDLE_HEIGHT,
   PADDLE_WIDTH,
   PADDLE_Y,
+  PRECISE_CATCH_THRESHOLD,
+  PRISM_SPLIT_ANGLE_DEG,
+  PRISM_SPLIT_COUNT,
   REVIVE_BALL_COUNT,
   REVIVE_FAN_ANGLES,
   SKILL_REFILL_COUNT,
@@ -38,6 +50,7 @@ import {
   SOFT_HOMING_TANGENT_FACTOR,
   WALL_LEFT,
   WALL_RIGHT,
+  brickColorAt,
 } from './constants.js';
 import { AimRaycaster } from './AimRaycaster.js';
 import { BrickGrid } from './BrickGrid.js';
@@ -48,6 +61,7 @@ import type { SkillContext, SkillUseResult } from './SkillSystem.js';
 import type {
   AimPrediction,
   Ball,
+  FeverSnapshot,
   GameEvent,
   GamePhase,
   LevelRuntimeConfig,
@@ -106,6 +120,16 @@ export class GameEngine implements PhysicsWorld {
   private endgameAssistActive = false;
   private endgameTargetCol = -1;
   private endgameTargetRow = -1;
+
+  /* --- Milestone 5 / Step 2：Fever 暴走状态 --- */
+  /** Fever 能量（0 ~ FEVER_ENERGY_MAX）。 */
+  private feverEnergy = 0;
+  /** Fever 是否处于暴走中。 */
+  private feverActive = false;
+  /** Fever 剩余时长（秒）。 */
+  private feverRemainingSec = 0;
+  /** 连锁引爆的统计缓冲（零 GC 复用）。 */
+  private readonly blastAffected = { count: 0 };
 
   constructor(options: GameEngineOptions) {
     this.level = options.level;
@@ -201,6 +225,24 @@ export class GameEngine implements PhysicsWorld {
     return {
       multiLaunchCount: this.skills.inventory.multiLaunchCount,
       tripleSplitCount: this.skills.inventory.tripleSplitCount,
+    };
+  }
+
+  /**
+   * Fever 暴走状态快照（Milestone 5 / Step 2）。
+   *
+   * Web HUD、Canvas HUD（微信版）与 e2e 探针共用这一份只读数据，
+   * 保证三端表现一致。
+   */
+  get feverSnapshot(): FeverSnapshot {
+    return {
+      energy: this.feverEnergy,
+      maxEnergy: FEVER_ENERGY_MAX,
+      active: this.feverActive,
+      remainingSec: this.feverRemainingSec,
+      durationSec: FEVER_DURATION_SEC,
+      // 与 `damageMultiplier()` / `feverDamageMultiplier()` 同源：取两者较大值。
+      damageMultiplier: Math.max(this.damageMultiplier(), this.feverDamageMultiplier()),
     };
   }
 
@@ -374,6 +416,7 @@ export class GameEngine implements PhysicsWorld {
     for (let i = 0; i < steps; i++) {
       this.physics.step(FIXED_DT);
       this.skills.update(FIXED_DT);
+      this.updateFever(FIXED_DT);
       this.elapsedSec += FIXED_DT;
       this.idleBrickSec += FIXED_DT;
       this.checkOutcome();
@@ -536,12 +579,214 @@ export class GameEngine implements PhysicsWorld {
   }
 
   /* ---------------------------------------------------------------- */
+  /* Milestone 5 / Step 2：特殊砖与 Fever 暴走                          */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * 特殊砖被击碎后的结算（由物理层在砖块摧毁的瞬间上抛）。
+   *
+   * - `BOMB`：以爆点为中心做 `BOMB_BLAST_RADIUS`（3×3）邻域冲击波，
+   *   对范围内可破坏砖造成 `BOMB_BLAST_DAMAGE` 点伤害；
+   *   相邻 BOMB 会**连环引爆**（递归深度受 `BOMB_CHAIN_MAX_DEPTH` 限制，
+   *   杜绝无限递归）；**钢墙 STEEL 永不被爆破破坏**。
+   * - `PRISM`：按当前速度方向分裂出 `PRISM_SPLIT_COUNT` 颗折射子球；
+   *   球池已满时，溢出的子球按 §5.2 规则转化为伤害倍率（不无限刷爆球池）。
+   * - `CORE`：立即发放 `CORE_SKILL_CHARGE` 次随机技能充能，
+   *   并给场上所有活跃球附加 `CORE_PIERCE_COUNT` 次穿透力。
+   */
+  onSpecialBrickDestroyed(
+    role: 'BOMB' | 'PRISM' | 'CORE',
+    col: number,
+    row: number,
+    x: number,
+    y: number,
+    vx: number,
+    vy: number,
+  ): void {
+    if (role === 'BOMB') {
+      this.blastAffected.count = 0;
+      this.explodeBomb(col, row, 0);
+      this.emit({
+        type: 'BOMB_EXPLODED',
+        col,
+        row,
+        x,
+        y,
+        affectedCount: this.blastAffected.count,
+      });
+      return;
+    }
+    if (role === 'PRISM') {
+      this.splitPrism(x, y, vx, vy);
+      return;
+    }
+    this.grantCoreBonus(x, y);
+  }
+
+  /**
+   * 炸弹冲击波（3×3 邻域 + 连环引爆）。
+   *
+   * 递归深度由 `BOMB_CHAIN_MAX_DEPTH` 封顶：即使整片区域都是炸弹，
+   * 也不会出现无限递归。
+   */
+  private explodeBomb(col: number, row: number, depth: number): void {
+    const radius = BOMB_BLAST_RADIUS;
+    for (let dr = -radius; dr <= radius; dr++) {
+      for (let dc = -radius; dc <= radius; dc++) {
+        if (dc === 0 && dr === 0) continue;
+        const tc = col + dc;
+        const tr = row + dr;
+        if (!this.grid.contains(tc, tr)) continue;
+        const cell = this.grid.at(tc, tr);
+        if (!cell) continue;
+        const cellRole = cell.role;
+        // 空位与钢墙都不参与爆破（钢墙永不破坏）。
+        if (cellRole === 'EMPTY' || cellRole === 'STEEL') continue;
+
+        const colorIndex = cell.colorIndex;
+        const rect = this.grid.cellRect(tc, tr);
+        const cx = rect.x + rect.width * 0.5;
+        const cy = rect.y + rect.height * 0.5;
+        const result = this.grid.damage(tc, tr, BOMB_BLAST_DAMAGE);
+        if (!result.damaged) continue;
+
+        this.blastAffected.count++;
+        if (result.destroyed) {
+          this.onBrickDestroyed(tc, tr);
+        }
+        this.emit({
+          type: 'BRICK_HIT',
+          col: tc,
+          row: tr,
+          x: cx,
+          y: cy,
+          color: brickColorAt(colorIndex),
+          destroyed: result.destroyed,
+          combo: this.combo,
+        });
+
+        if (result.destroyed && cellRole === 'BOMB' && depth < BOMB_CHAIN_MAX_DEPTH) {
+          this.explodeBomb(tc, tr, depth + 1);
+        }
+      }
+    }
+  }
+
+  /**
+   * 棱镜折射分裂：按当前速度方向左右各偏 `PRISM_SPLIT_ANGLE_DEG` 度，
+   * 分裂出 `PRISM_SPLIT_COUNT` 颗子球。
+   *
+   * 球池满时溢出部分转化为伤害倍率（与蓝标/橙标技能共用同一套规则）。
+   */
+  private splitPrism(x: number, y: number, vx: number, vy: number): void {
+    const speed = Math.hypot(vx, vy);
+    if (speed <= ANGLE_EPSILON) return;
+
+    const baseAngle = Math.atan2(vx, -vy);
+    const spread = (PRISM_SPLIT_ANGLE_DEG * Math.PI) / 180;
+
+    let spawned = 0;
+    let overflow = 0;
+    for (let s = 0; s < PRISM_SPLIT_COUNT; s++) {
+      const sign = s === 0 ? -1 : 1;
+      const angle = baseAngle + sign * spread;
+      const nvx = Math.sin(angle) * speed;
+      const nvy = -Math.cos(angle) * speed;
+      const ball = this.physics.spawnBall(x, y, nvx, nvy, BALL_RADIUS);
+      if (ball) spawned++;
+      else overflow++;
+    }
+
+    if (overflow > 0) {
+      this.skills.raiseOverflowDamage(overflow, this.physics.maxBalls, (event) => this.emit(event));
+    }
+    this.emit({ type: 'PRISM_SPLIT', x, y, spawnedCount: spawned });
+  }
+
+  /**
+   * 核心砖奖励：随机发放一次技能充能，并给场上所有活跃球附加穿透力。
+   */
+  private grantCoreBonus(x: number, y: number): void {
+    const skill: 'MULTI_LAUNCH' | 'TRIPLE_SPLIT' = this.rng() < 0.5 ? 'MULTI_LAUNCH' : 'TRIPLE_SPLIT';
+    const total = this.grantSkill(skill, CORE_SKILL_CHARGE);
+    this.emit({ type: 'CORE_GRANTED', skill, total, x, y });
+
+    const balls = this.physics.balls;
+    for (let i = 0; i < balls.length; i++) {
+      const ball = balls[i];
+      if (ball && ball.active) ball.pierceCount += CORE_PIERCE_COUNT;
+    }
+  }
+
+  /**
+   * 精准接球（Milestone 5 / Step 2）。
+   *
+   * `|offsetRatio| >= PRECISE_CATCH_THRESHOLD`（挡板边缘命中）且为有效战斗回弹时，
+   * 累计 `FEVER_ENERGY_PER_CATCH` 点 Fever 能量；能量满 `FEVER_ENERGY_MAX` 时
+   * 自动进入 Fever 暴走（持续 `FEVER_DURATION_SEC` 秒）。
+   */
+  onPaddleHit(offsetRatio: number): void {
+    if (this.phase !== 'PLAYING') return;
+    if (!Number.isFinite(offsetRatio)) return;
+    if (Math.abs(offsetRatio) < PRECISE_CATCH_THRESHOLD) return;
+    // Fever 期间不再累计能量（结束后清零重新积攒）。
+    if (this.feverActive) return;
+
+    this.feverEnergy = Math.min(FEVER_ENERGY_MAX, this.feverEnergy + FEVER_ENERGY_PER_CATCH);
+    this.emit({ type: 'PRECISE_CATCH', offsetRatio, feverEnergy: this.feverEnergy });
+    if (this.feverEnergy >= FEVER_ENERGY_MAX) {
+      this.activateFever();
+    }
+  }
+
+  /**
+   * 激活 Fever 暴走：2× 伤害倍率，持续 `FEVER_DURATION_SEC` 秒。
+   *
+   * **不发放任何全局穿透**（见 `constants.ts` 中 `FEVER_DAMAGE_MULTIPLIER` 的
+   * 设计取舍说明）：全局穿透会改写球的轨迹模型，把第 18 / 19 关的千砖阵
+   * 破砖率从 99% 打到 14%，击穿 V1 回归门禁。伤害倍率分支对单血砖等价、
+   * 对多血砖只加速破砖，轨迹零改变。
+   */
+  private activateFever(): void {
+    this.feverActive = true;
+    this.feverRemainingSec = FEVER_DURATION_SEC;
+    this.emit({ type: 'FEVER_ACTIVATED', durationSec: FEVER_DURATION_SEC });
+  }
+
+  /** Fever 倒计时推进（结束清零能量并回收额外穿透）。 */
+  private updateFever(dt: number): void {
+    if (!this.feverActive) return;
+    this.feverRemainingSec -= dt;
+    if (this.feverRemainingSec > 0) return;
+    this.feverRemainingSec = 0;
+    this.feverActive = false;
+    this.feverEnergy = 0;
+    this.emit({ type: 'FEVER_ENDED' });
+  }
+
+  /* ---------------------------------------------------------------- */
   /* PhysicsWorld 实现                                                 */
   /* ---------------------------------------------------------------- */
 
-  /** 当前全局伤害倍率（技能溢出时 > 1）。 */
+  /**
+   * 当前全局伤害倍率（仅技能溢出时 > 1）。
+   *
+   * Fever 的倍率走独立的 `feverDamageMultiplier()`，因为它**只对已受损的砖**
+   * 生效，语义与「技能溢出全局生效」不同，混在一起会让物理层无法区分。
+   */
   damageMultiplier(): number {
     return this.skills.damageMultiplier;
+  }
+
+  /**
+   * Fever 暴走的伤害倍率（未开启时为 1）。
+   *
+   * 物理层只把该倍率施加给**已受损的砖**：1 血 / 2 血砖的破碎时序与基线
+   * 完全一致，3 血及以上砖被加速击碎 —— 这样既满足「2× 伤害倍率」的需求，
+   * 又不会击穿 V1 回归门禁（实测无条件 2× 会让 `test:bot` 从 17/20 掉到 13/20）。
+   */
+  feverDamageMultiplier(): number {
+    return this.feverActive ? FEVER_DAMAGE_MULTIPLIER : 1;
   }
 
   /** 事件出口（入队，由消费方 drain）。 */
@@ -599,6 +844,9 @@ export class GameEngine implements PhysicsWorld {
     this.endgameAssistActive = false;
     this.endgameTargetCol = -1;
     this.endgameTargetRow = -1;
+    this.feverEnergy = 0;
+    this.feverActive = false;
+    this.feverRemainingSec = 0;
     this.events.length = 0;
     this.paddle.x = (WALL_LEFT + WALL_RIGHT) * 0.5;
     this.paddle.targetX = this.paddle.x;

@@ -9,6 +9,7 @@ import type {
   AimPrediction,
   Ball,
   BrickCell,
+  FeverSnapshot,
   GamePhase,
   Paddle,
 } from '../core/types.js';
@@ -50,6 +51,11 @@ export interface GameSnapshot {
   paddleSkinId: string;
   /** 全局静音（渲染器仅用于决定是否画静音角标，音频状态以音频引擎为准）。 */
   muted: boolean;
+  /**
+   * Milestone 5 / Step 2：Fever 暴走状态快照（可选字段，向后兼容）。
+   * 缺省视为「无 Fever」，渲染层据此决定是否绘制 Fever 拖尾 / 边框光效。
+   */
+  fever?: FeverSnapshot;
 }
 
 export interface RenderContextData {
@@ -65,6 +71,13 @@ export interface IRenderer {
   resize(width: number, height: number, dpr: number): void;
   setSkin(paddleSkinId: string, ballSkinId?: string): void;
   spawnBrickParticles(x: number, y: number, color: string, count: number): void;
+  /**
+   * Milestone 5 / Step 2：特效爆发粒子（炸弹爆破 / 棱镜折射 / 核心充能）。
+   *
+   * 可选方法：颜色直接用预烘焙碎块贴图索引，数量不再受普通砖 2~3 的限制。
+   * 仍复用同一个定长 `ParticlePool`，运行期零分配。
+   */
+  spawnEffectBurst?(x: number, y: number, colorIndex: number, count: number): void;
   triggerScreenShake(intensity: number, durationMs: number): void;
   render(data: RenderContextData, dt: number): void;
   dispose(): void;

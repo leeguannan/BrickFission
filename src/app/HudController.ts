@@ -67,6 +67,13 @@ export class HudController {
   private readonly modalBody: HTMLElement;
   private readonly modalActions: HTMLElement;
   private readonly shopPanel: HTMLElement;
+  /* Milestone 5 / Step 2：Fever 能量条 */
+  private readonly feverBar: HTMLElement;
+  private readonly feverFill: HTMLElement;
+  private readonly feverLabel: HTMLElement;
+  private lastFeverPercent = -1;
+  private lastFeverActive: boolean | null = null;
+  private lastFeverLabel = '';
 
   constructor(callbacks: HudCallbacks) {
     const $ = <T extends HTMLElement>(id: string): T => {
@@ -93,6 +100,9 @@ export class HudController {
     this.modalBody = $('modal-body');
     this.modalActions = $('modal-actions');
     this.shopPanel = $('shop-panel');
+    this.feverBar = $('fever-bar');
+    this.feverFill = $('fever-fill');
+    this.feverLabel = $('fever-label');
 
     this.btnSpeed.addEventListener('click', callbacks.onSpeedCycle);
     this.btnRestart.addEventListener('click', callbacks.onRestart);
@@ -188,6 +198,33 @@ export class HudController {
     if (this.lastCoins === value) return;
     this.lastCoins = value;
     this.coinCount.textContent = String(value);
+  }
+
+  /**
+   * Milestone 5 / Step 2：Fever 能量条同步。
+   *
+   * @param energy 当前能量（0 ~ maxEnergy）
+   * @param maxEnergy 能量上限
+   * @param active Fever 是否处于暴走状态
+   */
+  setFever(energy: number, maxEnergy: number, active: boolean): void {
+    const ratio = maxEnergy > 0 ? Math.max(0, Math.min(1, energy / maxEnergy)) : 0;
+    const percent = Math.round(ratio * 100);
+    if (percent !== this.lastFeverPercent) {
+      this.lastFeverPercent = percent;
+      this.feverFill.style.width = `${percent}%`;
+    }
+    if (active !== this.lastFeverActive) {
+      this.lastFeverActive = active;
+      this.feverBar.classList.toggle('active', active);
+    }
+    // 能量为 0 且未激活时隐藏整条进度条（保持画面干净）
+    this.feverBar.classList.toggle('visible', active || percent > 0);
+    const label = active ? 'FEVER 暴走中' : 'FEVER';
+    if (label !== this.lastFeverLabel) {
+      this.lastFeverLabel = label;
+      this.feverLabel.textContent = label;
+    }
   }
 
   /** 显示结算/提示弹窗。 */

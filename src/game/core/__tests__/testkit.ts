@@ -10,6 +10,14 @@ import { BrickGrid, makeEmptyCell } from '../BrickGrid.js';
 import type { PhysicsWorld } from '../PhysicsEngine.js';
 import type { Ball, BrickCell, GameEvent, LevelRuntimeConfig, Paddle, Rect } from '../types.js';
 
+/** Milestone 5 / Step 2 特殊砖角色（炸弹 / 棱镜 / 核心）。 */
+export type SpecialRole = 'BOMB' | 'PRISM' | 'CORE';
+
+/** 构造特殊砖格（BOMB / PRISM / CORE）。 */
+export function makeSpecialCell(role: SpecialRole, hp = 1): BrickCell {
+  return { role, hp, maxHp: hp, colorIndex: 0 };
+}
+
 /** 测试网格尺寸（落在文档允许的 cols ∈ [28,48] / rows ∈ [24,42] 内）。 */
 export const TEST_COLS = 42;
 export const TEST_ROWS = 38;
